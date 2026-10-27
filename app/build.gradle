@@ -1,0 +1,44 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'io.github.gkdhide.gkdx'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'io.github.gkdhide.gkdx'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    lint {
+        abortOnError false
+    }
+}
+
+dependencies {
+    // Xposed API 仅编译期使用，运行时由 LSPosed 宿主提供
+    compileOnly 'de.robv.android.xposed:api:82'
+    // GKD 订阅 JSON5 解析
+    implementation 'li.songe:json5:0.8.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0'
+    // GKD 官方选择器引擎（内嵌源码）
+    implementation project(':gkd-selector')
+}

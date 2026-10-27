@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 配置应用内下载订阅使用 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="GKD订阅引擎"
+        android:icon="@drawable/ic_launcher"
+        android:allowBackup="false"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+        <!-- LSPosed 模块声明 -->
+        <meta-data android:name="xposedmodule" android:value="true" />
+        <meta-data android:name="xposeddescription" android:value="在目标应用进程内运行 GKD 订阅规则跳过开屏广告，无需无障碍权限" />
+        <meta-data android:name="xposedminversion" android:value="53" />
+        <!-- 允许 Hook 侧通过 XSharedPreferences 读取订阅数据 -->
+        <meta-data android:name="xposedsharedprefs" android:value="true" />
+
+        <activity
+            android:name=".ConfigActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
