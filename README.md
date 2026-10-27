@@ -1,19 +1,31 @@
 # GKD 订阅引擎 (GKDX)
 
-一个 LSPosed 模块：**在目标应用进程内直接运行 GKD 订阅规则**，跳过开屏广告和常见弹窗。
+一个 LSPosed 模块，**两种能力二合一**：
 
-与 GKD 本体的区别：**完全不需要无障碍权限** —— 引擎内嵌 [gkd-kit 官方 selector 选择器引擎](https://github.com/gkd-kit/gkd/tree/main/gkd-selector)（38 个源文件直接编译进模块），通过 LSPosed 注入目标应用后，用应用自己的 View 树替代无障碍节点树做规则匹配，用 `performClick()`/合成点击事件替代无障碍手势。从系统设置到任何检测面，都看不到"无障碍服务"的存在。
+1. **订阅引擎**：在目标应用进程内直接运行 GKD 订阅规则，跳过开屏广告和常见弹窗，**完全不需要无障碍权限**。内嵌 [gkd-kit 官方 selector 选择器引擎](https://github.com/gkd-kit/gkd/tree/main/gkd-selector)（38 个源文件直接编译进模块），用应用自己的 View 树替代无障碍节点树做规则匹配，用 `performClick()`/合成点击事件替代无障碍手势。
+2. **无障碍隐藏**（原 [GKDHide](https://github.com/suiren0219/GKDHide) 能力，已并入）：若你同时使用 GKD 本体，本模块可在作用域应用中**对外隐藏 GKD 的无障碍服务状态**，帮助通过"检测到无障碍服务开启"类风控。
 
-## 与 GKDHide（同组织另一模块）的关系
+## 无障碍隐藏原理
 
-| | GKDHide | GKDX（本模块） |
+应用检测无障碍有三类手段，模块在目标应用进程内全部拦截（GKD 本体进程不受影响，服务保持开启）：
+
+| 检测手段 | 模块处理 |
+|---|---|
+| `AccessibilityManager.getEnabledAccessibilityServiceList()` 查已启用服务列表 | 过滤掉 GKD 的服务 |
+| `AccessibilityManager.isEnabled()` / `isTouchExplorationEnabled()` 查全局开关 | strict 模式下返回 `false` |
+| `Settings.Secure` 查 `enabled_accessibility_services`、`accessibility_enabled` | strict 模式下返回空串 / `"0"` |
+
+默认隐藏目标为 GKD（`li.songe.gkd`，按包名前缀匹配且始终包含），可在配置里添加其他目标或排除特定应用。
+
+## 订阅引擎 vs GKDHide 独立版怎么选
+
+| | GKDHide 单独用 | GKDX（本模块） |
 |---|---|---|
-| 原理 | GKD 正常开无障碍 + 模块对外隐藏 | 不用无障碍，规则在目标应用进程内执行 |
-| 规则来源 | GKD 本体自己的订阅 | 本模块管理的订阅源（同一套 GKD 订阅格式） |
+| 跳广告执行者 | GKD 本体（无障碍） | 进程内引擎（无感知）+ 可选隐藏能力 |
 | 规则覆盖率 | 100%（GKD 原生） | 原生 View 应用覆盖良好，WebView/Flutter 内部节点不可见 |
-| 适用场景 | 检测只针对无障碍开关 | 检测环境彻底禁止无障碍 / 不想再装 GKD |
+| 适用场景 | 检测只针对无障碍开关 | 检测环境彻底禁止无障碍 / 想要一个模块全搞定 |
 
-两者可以共存，也可以只用 GKDX。
+两者可共存；只用 GKDX 时把"隐藏"开关关掉即可。
 
 ## 订阅支持
 

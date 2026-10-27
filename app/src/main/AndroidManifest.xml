@@ -12,7 +12,7 @@
 
         <!-- LSPosed 模块声明 -->
         <meta-data android:name="xposedmodule" android:value="true" />
-        <meta-data android:name="xposeddescription" android:value="在目标应用进程内运行 GKD 订阅规则跳过开屏广告，无需无障碍权限" />
+        <meta-data android:name="xposeddescription" android:value="进程内运行 GKD 订阅规则跳广告（无需无障碍）+ 可对外隐藏 GKD 无障碍状态" />
         <meta-data android:name="xposedminversion" android:value="53" />
         <!-- 允许 Hook 侧通过 XSharedPreferences 读取订阅数据 -->
         <meta-data android:name="xposedsharedprefs" android:value="true" />
