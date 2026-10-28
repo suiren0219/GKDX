@@ -9,3 +9,4 @@
 .cxx
 app/build
 gkd-selector/build
+bench/build
