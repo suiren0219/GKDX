@@ -3,6 +3,10 @@
 
     <!-- 配置应用内下载订阅使用 -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Root 模式常驻前台服务 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:label="GKD订阅引擎"
@@ -25,5 +29,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".RootEngineService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the ad-skipping rule engine running in the background" />
+        </service>
     </application>
 </manifest>

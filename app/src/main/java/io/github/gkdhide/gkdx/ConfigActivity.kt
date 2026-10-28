@@ -2,9 +2,14 @@ package io.github.gkdhide.gkdx
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.graphics.Typeface
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
@@ -27,16 +32,24 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 模块配置页（两种能力合一）：
- * - 订阅引擎：管理订阅源、下载订阅（gzip+base64 存入 SharedPreferences 供 Hook 侧读取）
- * - 无障碍隐藏：开关与目标配置
+ * 模块配置页：
+ * - 订阅源管理（内置官方 + 3 个社区订阅）
+ * - Root 模式开关（不注入应用进程，靠 root 读屏点击）
+ * - 无障碍隐藏开关（配合 GKD 本体使用）
+ * - 关于与原作者信息
  */
 class ConfigActivity : Activity() {
 
-    private val defaultUrl =
-        "https://registry.npmmirror.com/@gkd-kit/subscription/latest/files/dist/gkd.json5"
+    /** 内置订阅源：官方已停止维护，社区源提供更多/更新的规则；全部实测可用 */
+    private val defaultUrls = listOf(
+        "https://registry.npmmirror.com/@ganlinte/gkd-subscription/latest/files/dist/ganlin_gkd.json5",
+        "https://registry.npmmirror.com/@aisouler/gkd_subscription/latest/files/dist/AIsouler_gkd.json5",
+        "https://registry.npmmirror.com/@adpro/gkd_subscription/latest/files/dist/Adpro_gkd.json5",
+        "https://registry.npmmirror.com/@gkd-kit/subscription/latest/files/dist/gkd.json5",
+    ).joinToString("\n")
 
     private lateinit var statusView: TextView
+    private lateinit var rootStatusView: TextView
     private lateinit var urlsInput: EditText
     private lateinit var swHideMaster: Switch
     private lateinit var swStrict: Switch
@@ -44,9 +57,27 @@ class ConfigActivity : Activity() {
     private lateinit var swLog: Switch
     private lateinit var targetsInput: EditText
     private lateinit var excludesInput: EditText
+    private val ticker = Handler(Looper.getMainLooper())
+    private val tick = object : Runnable {
+        override fun run() {
+            rootStatusView.text = if (RootEngine.running) "Root 模式：运行中\n${RootEngine.status}" else "Root 模式：未运行"
+            ticker.postDelayed(this, 1000)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        ticker.post(tick)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        ticker.removeCallbacks(tick)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        maybeRequestNotificationPermission()
         val sp = getSharedPreferences("config", Context.MODE_PRIVATE)
         val d = resources.displayMetrics.density
         val pad = (16 * d).toInt()
@@ -56,39 +87,68 @@ class ConfigActivity : Activity() {
             setPadding(pad, pad, pad, pad)
         }
 
-        root.addView(sectionTitle("GKD 订阅引擎", 22f, true))
-        root.addView(descText(
-            "LSPosed 模块（订阅引擎 + 无障碍隐藏 二合一）：\n" +
-                    "① 在作用域应用进程内直接运行 GKD 订阅规则跳广告，无需无障碍权限；\n" +
-                    "② 若你同时使用 GKD 本体，可对外隐藏其无障碍状态帮助过检测。\n\n" +
-                    "使用：1. LSPosed 启用本模块；2. 作用域勾选目标应用；3. 强停目标应用重开；4. 点\"更新订阅\"拉规则。"
+        root.addView(title("GKD 订阅引擎", 22f))
+        root.addView(desc(
+            "LSPosed 模块，三种用法可自由组合：\n" +
+                    "① Xposed 模式：作用域应用进程内直接匹配订阅规则（最快，需勾选作用域，不装无障碍）；\n" +
+                    "② Root 模式：引擎跑在模块自己的 root 进程里，读屏点击，完全不注入任何应用；\n" +
+                    "③ 无障碍隐藏：同时使用 GKD 本体时，对外隐藏其无障碍状态。\n\n" +
+                    "Xposed 模式需要：LSPosed 启用模块 → 作用域勾选目标应用 → 强停重开。\n" +
+                    "Root 模式需要：授予本应用 root 权限（与作用域无关）。"
         ))
+
+        // ---------- 订阅 ----------
+        root.addView(title("订阅", 16f))
         statusView = TextView(this).apply { text = loadStatus(sp) }
         root.addView(statusView)
-
-        root.addView(sectionTitle("订阅地址（每行一个 URL）", 14f, false))
-        urlsInput = input(sp.getString("urls", defaultUrl) ?: "", 3)
+        root.addView(label("订阅地址（每行一个 URL）："))
+        urlsInput = input(sp.getString("urls", defaultUrls) ?: defaultUrls, 5)
         root.addView(urlsInput)
         root.addView(button("更新订阅") { update(sp) })
 
-        root.addView(sectionTitle("隐藏 GKD 无障碍（配合 GKD 本体使用）", 16f, true))
-        swHideMaster = switch("对外隐藏 GKD 的无障碍服务状态（不用 GKD 可关闭）", sp.getBoolean("hide_master", true))
-        root.addView(swHideMaster)
-        swStrict = switch("完全伪装无障碍未开启（推荐；目标应用认为无障碍整体关闭）", sp.getBoolean("strict", true))
-        root.addView(swStrict)
-        swHideInstalled = switch("隐藏已安装服务列表（更彻底，可能影响目标应用自身无障碍功能）", sp.getBoolean("hide_installed", false))
-        root.addView(swHideInstalled)
-        swLog = switch("输出日志（LSPosed 日志中查看 GKDX 前缀）", sp.getBoolean("log", false))
-        root.addView(swLog)
+        // ---------- Root 模式 ----------
+        root.addView(title("Root 模式（不勾作用域、不注入应用）", 16f))
+        rootStatusView = TextView(this).apply { text = "Root 模式：未运行" }
+        root.addView(rootStatusView)
+        root.addView(desc("以 root 读屏（uiautomator dump）并点击（input tap），能覆盖 WebView 内部节点；轮询间隔约 0.5-1.2 秒，比 Xposed 模式慢。需要一个常驻通知。"))
+        root.addView(button("启动 Root 模式") {
+            if (!RootShell.isRoot()) {
+                Toast.makeText(this, "未获得 root 权限，请先在 root 管理器中授予本应用", Toast.LENGTH_LONG).show()
+            } else {
+                val intent = Intent(this, RootEngineService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+            }
+        })
+        root.addView(button("停止 Root 模式") {
+            stopService(Intent(this, RootEngineService::class.java))
+        })
 
-        root.addView(sectionTitle("额外隐藏目标（可选；li.songe.gkd 始终包含）", 14f, false))
+        // ---------- 无障碍隐藏 ----------
+        root.addView(title("无障碍隐藏（配合 GKD 本体使用）", 16f))
+        swHideMaster = addSwitch(root, "对外隐藏 GKD 的无障碍服务状态", sp.getBoolean("hide_master", true))
+        swStrict = addSwitch(root, "完全伪装无障碍未开启（推荐）", sp.getBoolean("strict", true))
+        swHideInstalled = addSwitch(root, "隐藏已安装服务列表（更彻底）", sp.getBoolean("hide_installed", false))
+        swLog = addSwitch(root, "输出日志（LSPosed 日志过滤 GKDX）", sp.getBoolean("log", false))
+        root.addView(label("额外隐藏目标（可选；li.songe.gkd 始终包含）："))
         targetsInput = input(sp.getString("targets", "") ?: "", 2)
         root.addView(targetsInput)
-        root.addView(sectionTitle("排除的应用（这些应用内不做隐藏）", 14f, false))
+        root.addView(label("排除的应用（这些应用内不做隐藏）："))
         excludesInput = input(sp.getString("excludes", "") ?: "", 2)
         root.addView(excludesInput)
-
         root.addView(button("保存配置") { saveConfig(sp) })
+
+        // ---------- 关于 ----------
+        root.addView(title("关于 / 原作者", 16f))
+        root.addView(desc(
+            "• GKD 原作者：lisonge（GitHub @lisonge）\n" +
+                    "  项目主页：https://github.com/gkd-kit/gkd\n" +
+                    "  订阅数据：https://github.com/gkd-kit/subscription\n" +
+                    "• 选择器引擎：取自 gkd-kit/gkd 的 gkd-selector 模块，原样内嵌于本模块，遵循 GPL-3.0\n" +
+                    "• 内置社区订阅：#ganlinte、#AIsouler、#Adpro（各自作品，版权归原作者）\n" +
+                    "• 无障碍隐藏思路参考：https://github.com/AoEiuV020/IAmNotDisabled\n" +
+                    "• 本模块：https://github.com/suiren0219/GKDX ，同样以 GPL-3.0 发布\n\n" +
+                    "本模块是第三方 LSPosed 实现，与 GKD 官方无关联；规则与引擎功劳属于 GKD 及其订阅作者们。"
+        ))
 
         val scroll = ScrollView(this)
         scroll.addView(root)
@@ -97,21 +157,31 @@ class ConfigActivity : Activity() {
 
     // ---------- UI 辅助 ----------
 
-    private fun sectionTitle(text: String, size: Float, bold: Boolean) = TextView(this).apply {
+    private fun title(text: String, size: Float) = TextView(this).apply {
         this.text = text
         textSize = size
-        typeface = if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-        setPadding(0, (12 * resources.displayMetrics.density).toInt(), 0, (4 * resources.displayMetrics.density).toInt())
+        typeface = Typeface.DEFAULT_BOLD
+        setPadding(0, (14 * resources.displayMetrics.density).toInt(), 0, (4 * resources.displayMetrics.density).toInt())
     }
 
-    private fun descText(text: String) = TextView(this).apply {
+    private fun desc(text: String) = TextView(this).apply {
         this.text = text
-        setPadding(0, (10 * resources.displayMetrics.density).toInt(), 0, (10 * resources.displayMetrics.density).toInt())
+        textSize = 13f
+        setPadding(0, (8 * resources.displayMetrics.density).toInt(), 0, (8 * resources.displayMetrics.density).toInt())
     }
 
-    private fun switch(text: String, checked: Boolean) = Switch(this).apply {
+    private fun label(text: String) = TextView(this).apply {
         this.text = text
-        this.isChecked = checked
+        setPadding(0, (8 * resources.displayMetrics.density).toInt(), 0, 0)
+    }
+
+    private fun addSwitch(root: LinearLayout, text: String, checked: Boolean): Switch {
+        val sw = Switch(this).apply {
+            this.text = text
+            isChecked = checked
+        }
+        root.addView(sw)
+        return sw
     }
 
     private fun input(text: String, lines: Int) = EditText(this).apply {
@@ -119,7 +189,7 @@ class ConfigActivity : Activity() {
         minLines = lines
         gravity = android.view.Gravity.TOP
         typeface = Typeface.MONOSPACE
-        textSize = 12f
+        textSize = 11f
     }
 
     private fun button(text: String, onClick: () -> Unit) = Button(this).apply {
@@ -127,7 +197,15 @@ class ConfigActivity : Activity() {
         setOnClickListener { onClick() }
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = (12 * resources.displayMetrics.density).toInt() }
+        ).apply { topMargin = (8 * resources.displayMetrics.density).toInt() }
+    }
+
+    private fun maybeRequestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
     }
 
     // ---------- 状态与动作 ----------
@@ -163,25 +241,22 @@ class ConfigActivity : Activity() {
         Thread {
             val store = JSONArray()
             val summaries = mutableListOf<String>()
+            val appIds = LinkedHashSet<String>()
             var ruleCount = 0
-            var appCount = 0
             val fail = mutableListOf<String>()
             for (url in urls) {
                 try {
                     val text = download(url)
-                    // 解析校验 + 统计（与 Hook 侧同一套 json5 解析）
                     val root = Json5.parseToJsonElement(text).jsonObject
                     val name = (root["name"] as? JsonPrimitive)?.content ?: "未命名订阅"
-                    val apps = (root["apps"] as? JsonArray)
-                        ?: throw IllegalArgumentException("缺少 apps 字段")
+                    val apps = (root["apps"] as? JsonArray) ?: throw IllegalArgumentException("缺少 apps 字段")
                     var rc = 0
                     for (appEl in apps) {
                         val app = appEl as? JsonObject ?: continue
-                        appCount++
+                        (app["id"] as? JsonPrimitive)?.content?.let { appIds.add(it) }
                         val groups = (app["groups"] as? JsonArray) ?: continue
                         for (g in groups) {
-                            val rules = ((g as? JsonObject)?.get("rules") as? JsonArray) ?: continue
-                            rc += rules.size
+                            rc += ((g as? JsonObject)?.get("rules") as? JsonArray)?.size ?: 0
                         }
                     }
                     summaries += name
@@ -198,7 +273,9 @@ class ConfigActivity : Activity() {
                 if (store.length() > 0) {
                     sp.edit()
                         .putString("subs_store", store.toString())
-                        .putString("subs_meta", "订阅: ${summaries.joinToString(" + ")} | 应用: $appCount | 规则: $ruleCount")
+                        // 作用域外应用可在进程启动时用它快速判断"有没有我的规则"，没有就一个 Hook 都不装
+                        .putString("subs_apps", appIds.joinToString("|", prefix = "|", postfix = "|"))
+                        .putString("subs_meta", "订阅: ${summaries.joinToString(" + ")} | 应用: ${appIds.size} | 规则: $ruleCount")
                         .putLong("last_update", System.currentTimeMillis())
                         .putString("urls", urlsInput.text.toString())
                         .putBoolean("hide_master", swHideMaster.isChecked)
@@ -211,7 +288,8 @@ class ConfigActivity : Activity() {
                     statusView.text = loadStatus(sp)
                     Toast.makeText(
                         this,
-                        "更新完成：$ruleCount 条规则" + if (fail.isNotEmpty()) "（失败 ${fail.size} 个源）" else "",
+                        "更新完成：${appIds.size} 个应用 / $ruleCount 条规则" +
+                                if (fail.isNotEmpty()) "（失败 ${fail.size} 个源）" else "",
                         Toast.LENGTH_LONG
                     ).show()
                 } else {
@@ -222,15 +300,26 @@ class ConfigActivity : Activity() {
     }
 
     private fun download(url: String): String {
-        val conn = URL(url).openConnection() as HttpURLConnection
-        conn.connectTimeout = 15000
-        conn.readTimeout = 20000
-        conn.setRequestProperty("User-Agent", "GKDX/1.1")
-        try {
-            if (conn.responseCode !in 200..299) throw IllegalStateException("HTTP ${conn.responseCode}")
-            return conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
-        } finally {
-            conn.disconnect()
+        var current = URL(url)
+        repeat(4) {
+            val conn = current.openConnection() as HttpURLConnection
+            conn.connectTimeout = 15000
+            conn.readTimeout = 25000
+            conn.instanceFollowRedirects = true
+            conn.setRequestProperty("User-Agent", "GKDX/1.2")
+            try {
+                val code = conn.responseCode
+                if (code in 300..399) {
+                    val location = conn.getHeaderField("Location") ?: return@repeat
+                    current = URL(current, location)
+                    return@repeat
+                }
+                if (code !in 200..299) throw IllegalStateException("HTTP $code")
+                return conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            } finally {
+                conn.disconnect()
+            }
         }
+        throw IllegalStateException("重定向过多")
     }
 }

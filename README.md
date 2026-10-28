@@ -1,77 +1,70 @@
 # GKD 订阅引擎 (GKDX)
 
-一个 LSPosed 模块，**两种能力二合一**：
+一个 LSPosed 模块，**三种用法可自由组合**，全程不需要 ADB/Shizuku：
 
-1. **订阅引擎**：在目标应用进程内直接运行 GKD 订阅规则，跳过开屏广告和常见弹窗，**完全不需要无障碍权限**。内嵌 [gkd-kit 官方 selector 选择器引擎](https://github.com/gkd-kit/gkd/tree/main/gkd-selector)（38 个源文件直接编译进模块），用应用自己的 View 树替代无障碍节点树做规则匹配，用 `performClick()`/合成点击事件替代无障碍手势。
-2. **无障碍隐藏**（原 [GKDHide](https://github.com/suiren0219/GKDHide) 能力，已并入）：若你同时使用 GKD 本体，本模块可在作用域应用中**对外隐藏 GKD 的无障碍服务状态**，帮助通过"检测到无障碍服务开启"类风控。
+| 模式 | 原理 | 需要无障碍 | 需要勾作用域 | 需要 root |
+|---|---|---|---|---|
+| **Xposed 模式** | 引擎注入目标应用进程，用应用自己的 View 树匹配订阅规则并点击 | ❌ | ✅ | ❌ |
+| **Root 模式** | 引擎跑在模块自己的 root 进程里，`uiautomator dump` 读屏 + `input tap` 点击 | ❌ | ❌ **完全不注入任何应用** | ✅ |
+| **无障碍隐藏** | 同时使用 GKD 本体时，在作用域应用里隐藏其无障碍状态 | （GKD 需要） | ✅ | ❌ |
 
-## 无障碍隐藏原理
+规则来自 **GKD 原生订阅格式**，引擎内嵌 [gkd-kit 官方 selector 选择器引擎](https://github.com/gkd-kit/gkd/tree/main/gkd-selector)。
 
-应用检测无障碍有三类手段，模块在目标应用进程内全部拦截（GKD 本体进程不受影响，服务保持开启）：
+## 关于“要不要勾作用域 / 进程注入太多”
 
-| 检测手段 | 模块处理 |
-|---|---|
-| `AccessibilityManager.getEnabledAccessibilityServiceList()` 查已启用服务列表 | 过滤掉 GKD 的服务 |
-| `AccessibilityManager.isEnabled()` / `isTouchExplorationEnabled()` 查全局开关 | strict 模式下返回 `false` |
-| `Settings.Secure` 查 `enabled_accessibility_services`、`accessibility_enabled` | strict 模式下返回空串 / `"0"` |
+两种思路，按需选：
 
-默认隐藏目标为 GKD（`li.songe.gkd`，按包名前缀匹配且始终包含），可在配置里添加其他目标或排除特定应用。
+- **不想注入任何应用** → 用 **Root 模式**：LSPosed 作用域一个都不用勾（模块照样需要被 LSPosed 启用吗？不需要——Root 模式是模块自己进程里的普通代码，甚至可以在无 LSPosed 的 root 机上运行）。代价：轮询读屏约 0.5-1.2 秒一次，比进程内慢一点；好处：**能看到 WebView 内部节点**，这是 Xposed 模式和无障碍都拿不到的。
+- **想最快地跳过开屏** → 用 **Xposed 模式**：必须勾作用域（这是 Xposed 的机制，界面上的按钮只有该应用进程内才存在）。不过本模块做了减负优化：**下载订阅时记录所有规则覆盖的包名，进程启动时若该应用没有规则，一个 Hook 都不装**——所以把作用域勾得多也不会让无关应用变卡。
 
-## 订阅引擎 vs GKDHide 独立版怎么选
+框架（`android`/system_server）作用域对本模块没有意义：广告按钮不在系统进程里，必须进目标应用进程才能点它。
 
-| | GKDHide 单独用 | GKDX（本模块） |
-|---|---|---|
-| 跳广告执行者 | GKD 本体（无障碍） | 进程内引擎（无感知）+ 可选隐藏能力 |
-| 规则覆盖率 | 100%（GKD 原生） | 原生 View 应用覆盖良好，WebView/Flutter 内部节点不可见 |
-| 适用场景 | 检测只针对无障碍开关 | 检测环境彻底禁止无障碍 / 想要一个模块全搞定 |
-
-两者可共存；只用 GKDX 时把"隐藏"开关关掉即可。
-
-## 订阅支持
-
-- 使用 **GKD 原生订阅格式**（JSON5），直接吃 GKD 生态的订阅规则：
-  - 默认预置官方订阅地址（注意：官方默认订阅已停止维护，仅含存量规则）
-  - 可自行添加任意社区订阅 URL（如 Adpro-Team/GKD_subscription 等），每行一个
-- 支持的规则字段（v1）：`matches` / `anyMatches` / `excludeMatches`、`activityIds` / `excludeActivityIds`、`quickFind`、`action`（click/clickNode/clickCenter/longClick/back）、`matchDelay`、`matchTime`、`actionMaximum`、`resetMatch`（app/activity）
-- 规则组 `enable=false` 自动跳过；编译失败的选择器会跳过并记录日志
-
-## 工作原理
+## 内置订阅源（实测可用，可自行增删）
 
 ```
-目标应用进程（LSPosed 注入）
- ├─ 触发器：Activity.onResume(0/400/900/1500/2500ms 多轮)
- │          + TextView.setText / ViewGroup.addView（150ms 去抖）
- ├─ 快照：WindowManagerGlobal.mViews（含 Dialog 弹窗窗口）
- │        → ViewNodeAdapter 适配成 selector 引擎的 Node 接口
- ├─ 匹配：Selector.compile + querySelector（quickFind 走快速路径）
- └─ 执行：performClick / 合成 MotionEvent 点击 / performLongClick / onBackPressed
+https://registry.npmmirror.com/@ganlinte/gkd-subscription/latest/files/dist/ganlin_gkd.json5   # 甘霖（维护中）
+https://registry.npmmirror.com/@aisouler/gkd_subscription/latest/files/dist/AIsouler_gkd.json5 # AIsouler
+https://registry.npmmirror.com/@adpro/gkd_subscription/latest/files/dist/Adpro_gkd.json5       # Adpro
+https://registry.npmmirror.com/@gkd-kit/subscription/latest/files/dist/gkd.json5               # 官方默认（已停更）
 ```
 
-属性适配与 GKD 官方无障碍适配器对齐（`text`/`desc`/`vid`/`id`/`clickable`/`visibleToUser`/`childCount`/坐标等），短类名规则（`@ImageView`）与全名规则均能命中。
+四个源合计约 290 万字符、上万条规则、覆盖数千个应用。欢迎提交你所在地区的订阅地址（配置页每行一个 URL 即可，也欢迎开 issue 收罗更多可用订阅）。
 
 ## 使用方法
 
-1. 安装 APK，LSPosed 中启用模块；
-2. 作用域勾选需要跳广告的应用（不要勾选模块自身）；
-3. 强制停止目标应用后重开；
-4. 打开"GKD订阅引擎"应用，点"更新订阅"下载规则（之后可随时更新，热生效，无需重启目标应用）。
+### Xposed 模式
+1. 安装 APK → LSPosed 启用模块 → 作用域勾选目标应用；
+2. **强制停止**目标应用后重开；
+3. 打开「GKD订阅引擎」→ 点「更新订阅」。
 
-排查：开启 LSPosed 日志过滤 `GKDX` 可看到订阅加载与规则执行情况。
+### Root 模式
+1. 安装 APK → 在 root 管理器（Magisk/KernelSU/APatch）中授予本应用 root；
+2. 打开模块 → 「更新订阅」；
+3. 点「启动 Root 模式」（会显示常驻通知，通知上可停止）。
+
+### 隐藏 GKD 无障碍（配合 GKD 本体）
+配置页底部开关保持开启即可，默认隐藏 `li.songe.gkd`。
+
+## 支持的订阅字段
+
+`matches` / `anyMatches` / `excludeMatches`、`activityIds` / `excludeActivityIds`（支持 `.*` 前缀）、`quickFind`、`action`（click / clickNode / clickCenter / longClick / back）、`matchDelay`、`matchTime`、`actionMaximum`、`resetMatch`、组级 `enable`。
+
+暂未实现：`position` 定位点击、`swipeArg` 滑动、`preKeys` 规则依赖、`actionMaximumKey`/`actionCdKey` 共享计数、`globalGroups` 全局组。
 
 ## 已知局限
 
-- **WebView / Flutter / Unity 内部节点不可见**：View 树里只有 WebView 容器，其内部 DOM 文本只有无障碍树能读到。开屏广告的"跳过"按钮大多是原生 TextView，覆盖良好；广告落地页内的弹窗规则可能失效。
-- `position` 定位点击、`swipeArg` 滑动、`preKeys` 规则依赖、`actionMaximumKey` 共享计数、全局组（globalGroups）等高级语义暂未实现。
-- 规则匹配在主线程执行，超大界面 + 大量规则的极端情况可能有轻微掉帧。
-- 快照基于 View 树，语义上与无障碍节点树存在差异（例如部分自绘控件的文本拿不到）。
+- Xposed 模式：WebView / Flutter / Unity 内部节点在 View 树里不可见（Root 模式反而能覆盖 WebView，两者互补）。
+- Root 模式：轮询式，开屏广告如果只有 <0.5 秒的窗口可能来不及；`uiautomator dump` 在部分机型上偏慢。
+- 检测 LSPosed/root 本身属于 Shamiko/DenyList 的范畴；检测“是否安装 GKD”需 Hide My Applist 类模块。
+
+## 关于 / 原作者
+
+- **GKD 原作者：lisonge（GitHub [@lisonge](https://github.com/lisonge)）**，项目 <https://github.com/gkd-kit/gkd>，订阅数据 <https://github.com/gkd-kit/subscription>
+- **选择器引擎**：取自 gkd-kit/gkd 的 `gkd-selector` 模块，原样内嵌于本仓库 `gkd-selector/`，遵循其 **GPL-3.0** 许可证（见 [LICENSE](LICENSE)），本模块整体同样以 GPL-3.0 发布
+- **内置社区订阅**：甘霖（@ganlinte）、AIsouler（@AIsouler）、Adpro（@Adpro-Team）—— 规则版权归原作者
+- **无障碍隐藏思路参考**：[AoEiuV020/IAmNotDisabled](https://github.com/AoEiuV020/IAmNotDisabled)
+- 本模块是第三方实现，与 GKD 官方无任何关联；跳广告的功劳属于 GKD 与各位订阅作者。
 
 ## 构建
 
-`gradle assembleDebug`（JDK 17+，Android SDK 34）。CI：推送到 GitHub 后 Actions 自动构建。
-
-内嵌引擎源码来自 gkd-kit/gkd 仓库 `gkd-selector` 模块（commonMain + jvmMain），更新引擎时重新拷贝即可。
-
-## 致谢与许可
-
-- [gkd-kit/gkd](https://github.com/gkd-kit/gkd) —— `gkd-selector` 模块源码内嵌于本仓库 `gkd-selector/` 目录，遵循其 **GPL-3.0** 许可证（见 LICENSE），本模块整体同样以 GPL-3.0 发布
-- 本模块仅供个人设备上合法软件的正常使用场景
+`gradle assembleDebug`（JDK 17+，Android SDK 34）。推送 `v*` 标签会自动构建并把 APK 挂到 GitHub Release。

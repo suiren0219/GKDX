@@ -69,7 +69,27 @@ object SubscriptionStore {
     @Volatile private var cache: ParsedSubscription? = null
     @Volatile private var cacheKey: String? = null
     @Volatile private var cacheTime: Long = 0L
+    @Volatile private var indexCache: String? = null
+    @Volatile private var indexTime: Long = 0L
     private val lock = Any()
+
+    /**
+     * 订阅覆盖的应用包名索引（形如 |pkg1|pkg2|），由配置页在下载订阅时写入。
+     * 进程启动时用它做一次字符串判断即可决定"要不要装 Hook"，避免为无关应用注入。
+     */
+    fun appIndex(): String? {
+        if (indexCache != null && SystemClock.elapsedRealtime() - indexTime < 30_000) return indexCache
+        return try {
+            val prefs = XSharedPreferences(SELF_PACKAGE, "config")
+            prefs.reload()
+            prefs.getString("subs_apps", null)?.also {
+                indexCache = it
+                indexTime = SystemClock.elapsedRealtime()
+            }
+        } catch (t: Throwable) {
+            null
+        }
+    }
 
     fun get(): ParsedSubscription? {
         if (cache != null && SystemClock.elapsedRealtime() - cacheTime < 30_000) return cache
