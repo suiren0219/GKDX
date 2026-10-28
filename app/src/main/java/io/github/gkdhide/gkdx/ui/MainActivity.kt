@@ -410,8 +410,10 @@ private fun DashboardTab(subs: List<SubscriptionItem>, loading: Boolean, modifie
         item {
             SectionCard("Xposed 模式") {
                 Text(
-                    "在 LSPosed 中启用本模块，作用域勾选目标应用后强停重开即可。\n" +
-                            "订阅里没有规则的应用不会安装任何 Hook，作用域可以放心多勾。",
+                    "在 LSPosed 启用本模块后，作用域两种选法：\n" +
+                            "· 只勾目标应用（最克制）；\n" +
+                            "· 直接全选：LSPosed 作用域页右上角菜单 → 全选用户应用。本模块对订阅外应用不装引擎，多勾几乎零成本；存在全局组时才会在每个进程挂轻量 Hook。\n\n" +
+                            "LSPosed 的机制是模块只能进入被勾选的应用进程，这是平台安全设计，无法绕过；需要彻底免作用域请用 Root 模式。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
