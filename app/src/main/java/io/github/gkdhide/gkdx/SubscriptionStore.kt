@@ -36,6 +36,8 @@ data class CompiledRule(
 
 /** 一个编译后的规则组 */
 data class CompiledGroup(
+    val subIndex: Int,
+    val isGlobal: Boolean,
     val key: Int,
     val name: String,
     val activityIds: Set<String>?,
@@ -48,16 +50,69 @@ data class CompiledGroup(
     val rules: List<CompiledRule>,
 )
 
-/** 解析 + 编译完成的订阅集合（多订阅源聚合） */
+/** 编译前的轻量草稿：只保存字符串与标量，避免为所有应用持有选择器对象 */
+data class RuleDraft(
+    val key: Int?,
+    val matches: List<String>,
+    val anyMatches: List<String>,
+    val excludeMatches: List<String>,
+    val activityIds: Set<String>?,
+    val excludeActivityIds: Set<String>?,
+    val action: String,
+    val quickFind: Boolean,
+    val matchDelay: Long,
+    val matchTime: Long,
+    val actionMaximum: Int,
+    val resetMatch: String,
+)
+
+data class GroupDraft(
+    val subIndex: Int,
+    val isGlobal: Boolean,
+    val key: Int,
+    val name: String,
+    val activityIds: Set<String>?,
+    val excludeActivityIds: Set<String>?,
+    val quickFind: Boolean,
+    val matchDelay: Long,
+    val matchTime: Long,
+    val actionMaximum: Int,
+    val resetMatch: String,
+    val rules: List<RuleDraft>,
+)
+
+/** 解析完成的订阅集合（多订阅源聚合） */
 class ParsedSubscription(
     val summary: String,
     val ruleCount: Int,
-    val apps: Map<String, List<CompiledGroup>>,
-)
+    /** 全局组（globalGroups，对所有应用生效，开屏广告规则都在这里），量小，进程内直接编译 */
+    val globalGroups: List<CompiledGroup>,
+    /** 每个应用未编译的规则组草稿，按需编译 */
+    private val drafts: Map<String, List<GroupDraft>>,
+) {
+    private val compiled = HashMap<String, List<CompiledGroup>>()
+
+    /** 取某应用的规则组（含懒编译缓存）；没有则返回空表 */
+    fun groupsFor(pkg: String): List<CompiledGroup> {
+        compiled[pkg]?.let { return it }
+        val draft = drafts[pkg] ?: return emptyList()
+        synchronized(this) {
+            compiled[pkg]?.let { return it }
+            val groups = draft.mapNotNull { SubscriptionStore.compileGroup(it) }
+            // 控制内存：缓存超过 24 个应用时全部重置，下次用时再编译
+            if (compiled.size >= 24) compiled.clear()
+            compiled[pkg] = groups
+            return groups
+        }
+    }
+
+    /** 是否一条规则都没有（连全局组也没有） */
+    fun isEmpty(): Boolean = globalGroups.isEmpty() && drafts.isEmpty()
+}
 
 /**
  * Hook 侧订阅仓库：从本模块的 SharedPreferences 读取 ConfigActivity 下载好的
- * 订阅数据（gzip+base64），按需解析编译。30 秒缓存，改订阅后热生效。
+ * 订阅数据（gzip+base64），全局组直接编译，应用组按需懒编译。30 秒缓存。
  */
 object SubscriptionStore {
     private const val SELF_PACKAGE = "io.github.gkdhide.gkdx"
@@ -67,11 +122,13 @@ object SubscriptionStore {
     @Volatile private var cacheTime: Long = 0L
     @Volatile private var indexCache: String? = null
     @Volatile private var indexTime: Long = 0L
+    @Volatile private var globalCountCache: Int = -1
+    @Volatile private var globalCountTime: Long = 0L
     private val lock = Any()
 
     /**
-     * 订阅覆盖的应用包名索引（形如 |pkg1|pkg2|），由配置页在下载订阅时写入。
-     * 进程启动时用它做一次字符串判断即可决定"要不要装 Hook"，避免为无关应用注入。
+     * 订阅覆盖的应用包名索引（形如 |pkg1|pkg2|）。没有规则的应用在进程启动时
+     * 直接跳过、不装任何 Hook；但存在全局组时例外（全局组对所有应用生效）。
      */
     fun appIndex(): String? {
         if (indexCache != null && SystemClock.elapsedRealtime() - indexTime < 30_000) return indexCache
@@ -84,6 +141,21 @@ object SubscriptionStore {
             }
         } catch (t: Throwable) {
             null
+        }
+    }
+
+    /** 订阅里是否存在全局组（globalGroups），决定无规则应用是否也要装 Hook */
+    fun hasGlobalGroups(): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        if (globalCountCache >= 0 && now - globalCountTime < 30_000) return globalCountCache > 0
+        return try {
+            val prefs = XSharedPreferences(SELF_PACKAGE, "config")
+            prefs.reload()
+            globalCountCache = prefs.getInt("subs_global", 0)
+            globalCountTime = now
+            globalCountCache > 0
+        } catch (t: Throwable) {
+            globalCountCache > 0
         }
     }
 
@@ -104,7 +176,7 @@ object SubscriptionStore {
                 cache = parsed
                 cacheKey = raw
                 cacheTime = SystemClock.elapsedRealtime()
-                XposedBridge.log("[GKDX] 订阅已加载: ${parsed.summary}, 应用数=${parsed.apps.size}, 规则数=${parsed.ruleCount}")
+                XposedBridge.log("[GKDX] 订阅已加载: ${parsed.summary}, 全局组=${parsed.globalGroups.size}, 规则数=${parsed.ruleCount}")
                 return parsed
             } catch (t: Throwable) {
                 XposedBridge.log("[GKDX] 订阅解析失败")
@@ -117,61 +189,77 @@ object SubscriptionStore {
     /** subs_store 内容格式: [{"url":"..","data":"<base64(gzip(json5))>"},..] */
     private fun parseStore(raw: String): ParsedSubscription {
         val entries = Json5.parseToJsonElement(raw).jsonArray
-        val apps = HashMap<String, MutableList<CompiledGroup>>()
+        val drafts = HashMap<String, MutableList<GroupDraft>>()
+        val globalCompiled = ArrayList<CompiledGroup>()
         var ruleCount = 0
         val summaries = mutableListOf<String>()
-        for (entry in entries) {
+        for ((subIndex, entry) in entries.withIndex()) {
             val obj = entry.jsonObject
             val b64 = obj["data"]?.jsonPrimitive?.content ?: continue
             val text = ZipUtil.gunzip(Base64.decode(b64, Base64.DEFAULT))
-            val (summary, count) = parseSubscription(text, apps)
+            val (summary, count) = parseSubscription(text, subIndex, drafts, globalCompiled)
             summaries += summary
             ruleCount += count
         }
-        return ParsedSubscription(summaries.joinToString(" + "), ruleCount, apps)
+        return ParsedSubscription(summaries.joinToString(" + "), ruleCount, globalCompiled, drafts)
     }
 
     private fun parseSubscription(
         text: String,
-        apps: MutableMap<String, MutableList<CompiledGroup>>,
+        subIndex: Int,
+        drafts: MutableMap<String, MutableList<GroupDraft>>,
+        globalCompiled: MutableList<CompiledGroup>,
     ): Pair<String, Int> {
         val root = Json5.parseToJsonElement(text).jsonObject
         val subName = (root["name"] as? JsonPrimitive)?.content ?: "未命名订阅"
-        val appsArr = root["apps"] as? JsonArray
         var count = 0
-        if (appsArr != null) {
-            for (appEl in appsArr) {
-                val app = appEl as? JsonObject ?: continue
-                val appId = (app["id"] as? JsonPrimitive)?.content ?: continue
-                val groupsArr = app["groups"] as? JsonArray ?: continue
-                val groups = mutableListOf<CompiledGroup>()
-                for (gEl in groupsArr) {
-                    val g = gEl as? JsonObject ?: continue
-                    val enable = (g["enable"] as? JsonPrimitive)?.booleanOrNull ?: true
-                    if (!enable) continue
-                    val group = compileGroup(g) ?: continue
-                    groups += group
-                    count += group.rules.size
+
+        // 1) 全局组：官方与社区订阅的开屏广告规则都在这里，对所有应用生效
+        (root["globalGroups"] as? JsonArray)?.forEach { gEl ->
+            val g = gEl as? JsonObject ?: return@forEach
+            if (((g["enable"] as? JsonPrimitive)?.booleanOrNull ?: true)) {
+                groupDraft(g, subIndex, true)?.let { draft ->
+                    compileGroup(draft)?.let {
+                        globalCompiled.add(it)
+                        count += it.rules.size
+                    }
                 }
-                if (groups.isNotEmpty()) apps.getOrPut(appId) { mutableListOf() }.addAll(groups)
             }
         }
-        return "$subName" to count
+
+        // 2) 应用组：只存草稿，命中哪个应用再编译哪个
+        (root["apps"] as? JsonArray)?.forEach { appEl ->
+            val app = appEl as? JsonObject ?: return@forEach
+            val appId = (app["id"] as? JsonPrimitive)?.content ?: return@forEach
+            (app["groups"] as? JsonArray)?.forEach { gEl ->
+                val g = gEl as? JsonObject ?: return@forEach
+                if (((g["enable"] as? JsonPrimitive)?.booleanOrNull ?: true)) {
+                    groupDraft(g, subIndex, false)?.let { draft ->
+                        if (draft.rules.isNotEmpty()) {
+                            drafts.getOrPut(appId) { mutableListOf() }.add(draft)
+                            count += draft.rules.size
+                        }
+                    }
+                }
+            }
+        }
+        return subName to count
     }
 
-    private fun compileGroup(g: JsonObject): CompiledGroup? {
+    /** 从订阅 JSON 里抽规则组草稿（不编译选择器） */
+    private fun groupDraft(g: JsonObject, subIndex: Int, isGlobal: Boolean): GroupDraft? {
         val rulesArr = g["rules"] as? JsonArray ?: return null
-        val rules = mutableListOf<CompiledRule>()
+        val rules = mutableListOf<RuleDraft>()
         for (rEl in rulesArr) {
             val r = rEl as? JsonObject ?: continue
-            val matches = compileAll(r, "matches")
-            val anyMatches = compileAll(r, "anyMatches")
+            val matches = strList(r["matches"])
+            val anyMatches = strList(r["anyMatches"])
             if (matches.isEmpty() && anyMatches.isEmpty()) continue
-            rules += CompiledRule(
+            rules += RuleDraft(
                 key = (r["key"] as? JsonPrimitive)?.content?.toIntOrNull(),
                 matches = matches,
                 anyMatches = anyMatches,
-                excludeMatches = compileAll(r, "excludeMatches"),
+                excludeMatches = strList(r["excludeMatches"]),
                 activityIds = strSet(r["activityIds"]),
                 excludeActivityIds = strSet(r["excludeActivityIds"]),
                 action = (r["action"] as? JsonPrimitive)?.content ?: "click",
@@ -183,7 +271,9 @@ object SubscriptionStore {
             )
         }
         if (rules.isEmpty()) return null
-        return CompiledGroup(
+        return GroupDraft(
+            subIndex = subIndex,
+            isGlobal = isGlobal,
             key = (g["key"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0,
             name = (g["name"] as? JsonPrimitive)?.content ?: "",
             activityIds = strSet(g["activityIds"]),
@@ -197,23 +287,60 @@ object SubscriptionStore {
         )
     }
 
-    /** 字段值可能是字符串或字符串数组，统一为列表并逐条编译 */
-    private fun compileAll(obj: JsonObject, key: String): List<Selector> {
-        val el = obj[key] ?: return emptyList()
-        val sources = when (el) {
-            is JsonArray -> el.mapNotNull { (it as? JsonPrimitive)?.content }
-            is JsonPrimitive -> listOfNotNull(el.content)
-            else -> return emptyList()
+    /** 草稿 → 编译后的组（懒编译入口） */
+    internal fun compileGroup(d: GroupDraft): CompiledGroup? {
+        if (d.rules.isEmpty()) return null
+        val rules = mutableListOf<CompiledRule>()
+        for (rd in d.rules) {
+            val matches = compileAll(rd.matches)
+            val anyMatches = compileAll(rd.anyMatches)
+            if (matches.isEmpty() && anyMatches.isEmpty()) continue
+            rules += CompiledRule(
+                key = rd.key,
+                matches = matches,
+                anyMatches = anyMatches,
+                excludeMatches = compileAll(rd.excludeMatches),
+                activityIds = rd.activityIds,
+                excludeActivityIds = rd.excludeActivityIds,
+                action = rd.action,
+                quickFind = rd.quickFind,
+                matchDelay = rd.matchDelay,
+                matchTime = rd.matchTime,
+                actionMaximum = rd.actionMaximum,
+                resetMatch = rd.resetMatch,
+            )
         }
-        return sources.mapNotNull { src ->
-            when (val result = Selector.compile(src)) {
-                is SelectorCompileResult.Success -> result.value
-                is SelectorCompileResult.Failure -> {
-                    XposedBridge.log("[GKDX] 选择器编译失败: $src (${result.error.message})")
-                    null
-                }
+        if (rules.isEmpty()) return null
+        return CompiledGroup(
+            subIndex = d.subIndex,
+            isGlobal = d.isGlobal,
+            key = d.key,
+            name = d.name,
+            activityIds = d.activityIds,
+            excludeActivityIds = d.excludeActivityIds,
+            quickFind = d.quickFind,
+            matchDelay = d.matchDelay,
+            matchTime = d.matchTime,
+            actionMaximum = d.actionMaximum,
+            resetMatch = d.resetMatch,
+            rules = rules,
+        )
+    }
+
+    private fun compileAll(sources: List<String>): List<Selector> = sources.mapNotNull { src ->
+        when (val result = Selector.compile(src)) {
+            is SelectorCompileResult.Success -> result.value
+            is SelectorCompileResult.Failure -> {
+                XposedBridge.log("[GKDX] 选择器编译失败: $src (${result.error.message})")
+                null
             }
         }
+    }
+
+    private fun strList(el: JsonElement?): List<String> = when (el) {
+        is JsonArray -> el.mapNotNull { (it as? JsonPrimitive)?.content }
+        is JsonPrimitive -> listOfNotNull(el.content)
+        else -> emptyList()
     }
 
     private fun strSet(el: JsonElement?): Set<String>? = when (el) {

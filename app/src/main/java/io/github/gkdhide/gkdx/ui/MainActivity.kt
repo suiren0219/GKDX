@@ -514,7 +514,9 @@ private fun AppsTab(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    Switch(checked = enabled, onCheckedChange = { onToggle(row.id, it) })
+                    if (row.id != RuleRepository.GLOBAL_APP_ID) {
+                        Switch(checked = enabled, onCheckedChange = { onToggle(row.id, it) })
+                    }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
             }
@@ -535,7 +537,8 @@ private fun AppDetailScreen(
     onBack: () -> Unit,
 ) {
     val app = remember(subs, pkg) { subs.flatMap { it.apps }.firstOrNull { it.id == pkg } }
-    val groups = remember(app) { app?.groups.orEmpty().distinctBy { it.key } }
+    val groups = remember(app) { app?.groups.orEmpty().distinctBy { it.uid } }
+    val isGlobal = pkg == RuleRepository.GLOBAL_APP_ID
     val appEnabled = !DisabledStore.isAppDisabled(disabled, pkg)
 
     Scaffold(
@@ -579,20 +582,25 @@ private fun AppDetailScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("本应用全部规则", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                if (isGlobal) "全局规则组（对所有应用生效）" else "本应用全部规则",
+                                style = MaterialTheme.typography.titleSmall,
+                            )
                             Text(
                                 "${groups.size} 个规则组 / ${app?.ruleCount ?: 0} 条规则",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f),
                             )
                         }
-                        Switch(checked = appEnabled, onCheckedChange = { onToggleApp(pkg, it) })
+                        if (!isGlobal) {
+                            Switch(checked = appEnabled, onCheckedChange = { onToggleApp(pkg, it) })
+                        }
                     }
                 }
                 Spacer(Modifier.height(12.dp))
             }
-            items(groups, key = { it.key }) { group ->
-                val groupEnabled = !DisabledStore.isGroupDisabled(disabled, pkg, group.key)
+            items(groups, key = { it.uid }) { group ->
+                val groupEnabled = !disabled.contains(group.disabledKey)
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -610,9 +618,9 @@ private fun AppDetailScreen(
                         )
                     }
                     Switch(
-                        checked = groupEnabled && appEnabled,
-                        enabled = appEnabled,
-                        onCheckedChange = { onToggleGroup(DisabledStore.groupKey(pkg, group.key), it) },
+                        checked = groupEnabled && (isGlobal || appEnabled),
+                        enabled = isGlobal || appEnabled,
+                        onCheckedChange = { onToggleGroup(group.disabledKey, it) },
                     )
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))

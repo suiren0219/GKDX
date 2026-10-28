@@ -62,7 +62,11 @@ https://registry.npmmirror.com/@gkd-kit/subscription/latest/files/dist/gkd.json5
 
 `matches` / `anyMatches` / `excludeMatches`、`activityIds` / `excludeActivityIds`（支持 `.*` 前缀）、`quickFind`、`action`（click / clickNode / clickCenter / longClick / back）、`matchDelay`、`matchTime`、`actionMaximum`、`resetMatch`、组级 `enable`。
 
-暂未实现：`position` 定位点击、`swipeArg` 滑动、`preKeys` 规则依赖、`actionMaximumKey`/`actionCdKey` 共享计数、`globalGroups` 全局组。
+**`globalGroups` 全局组已支持**：GKD 各订阅的"开屏广告"规则都放在全局组里（作用于所有应用），v1.5.0 起正常生效，也会出现在"应用"列表顶部供单独关闭。存在全局组时，没有应用级规则的进程也会安装 Hook（这是全局组生效的前提）。
+
+性能：应用组规则**按包名懒编译**——每个进程只编译自己 + 全局组的选择器（实测全量编译 8245 个选择器需约 0.5 秒，懒编译后典型应用只需十几毫秒）。
+
+暂未实现：`position` 定位点击、`swipeArg` 滑动、`preKeys` 规则依赖、`actionMaximumKey`/`actionCdKey` 共享计数。
 
 ## 已知局限
 

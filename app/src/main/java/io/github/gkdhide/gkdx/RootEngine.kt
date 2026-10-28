@@ -32,7 +32,7 @@ object RootEngine {
         if (running) return null
         if (!RootShell.isRoot()) return "未获得 root 权限（请先授予本应用 root）"
         val subs = SubscriptionStore.get()
-        if (subs == null || subs.apps.isEmpty()) return "尚未下载订阅，请先点\"更新订阅\""
+        if (subs == null || subs.isEmpty()) return "尚未下载订阅，请先点\"更新订阅\""
         running = true
         onStatus = callback
         tapTimes.clear()
@@ -79,7 +79,7 @@ object RootEngine {
                     continue
                 }
                 val subs = SubscriptionStore.get()
-                val groups = subs?.apps?.get(pkg)
+                val groups = subs?.let { it.groupsFor(pkg) + it.globalGroups }
                 if (groups.isNullOrEmpty()) {
                     if (pkg != lastPkg) {
                         lastPkg = pkg
@@ -131,11 +131,13 @@ object RootEngine {
         val disabledKeys = DisabledCache.get()
         if (DisabledStore.isAppDisabled(disabledKeys, pkg)) return null
         for (group in groups) {
-            if (DisabledStore.isGroupDisabled(disabledKeys, pkg, group.key)) continue
+            if (group.isGlobal) {
+                if (DisabledStore.isGlobalGroupDisabled(disabledKeys, group.subIndex, group.key)) continue
+            } else if (DisabledStore.isGroupDisabled(disabledKeys, pkg, group.key)) continue
             if (group.excludeActivityIds?.any { activityMatch(it, activity) } == true) continue
             if (group.activityIds?.any { activityMatch(it, activity) } == false) continue
             for ((idx, rule) in group.rules.withIndex()) {
-                val stateKey = "$pkg:${group.key}:$idx:${rule.key}"
+                val stateKey = "$pkg|${if (group.isGlobal) "g" else "a"}${group.subIndex}:${group.key}:$idx:${rule.key}"
                 val count = actionCounts[stateKey] ?: 0
                 if (rule.actionMaximum > 0 && count >= rule.actionMaximum) continue
                 val lastTap = tapTimes[stateKey] ?: 0L

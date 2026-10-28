@@ -17,10 +17,11 @@ class EngineHook : IXposedHookLoadPackage {
         val pkg = lpp.packageName
         if (pkg == BuildConfig.APPLICATION_ID || pkg == "android") return
 
-        // 订阅覆盖判断：没有规则就不挂钩子，作用域勾多了也几乎零成本
+        // 订阅覆盖判断：没有规则的应用不挂钩子；但存在全局组（开屏规则）时例外，
+        // 全局组对所有应用生效，无规则应用也要装
         val index = SubscriptionStore.appIndex()
         val hasRules = index == null || index.contains("|$pkg|")
-        if (!hasRules) return
+        if (!hasRules && !SubscriptionStore.hasGlobalGroups()) return
 
         try {
             TriggerManager.install(pkg)

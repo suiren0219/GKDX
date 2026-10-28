@@ -35,6 +35,7 @@ object SubscriptionUpdater {
         val appIds = LinkedHashSet<String>()
         val names = ArrayList<String>()
         var ruleCount = 0
+        var globalCount = 0
         var failed = 0
 
         for (source in enabled) {
@@ -42,6 +43,8 @@ object SubscriptionUpdater {
                 val text = download(source.url)
                 val root = Json5.parseToJsonElement(text).jsonObject
                 names.add((root["name"] as? JsonPrimitive)?.content ?: source.shortName)
+                // 全局组（globalGroups，开屏广告规则）数量，供 Hook 侧判断"无规则应用也要装 Hook"
+                globalCount += (root["globalGroups"] as? JsonArray)?.size ?: 0
                 val apps = root["apps"] as? JsonArray ?: throw IllegalArgumentException("缺少 apps 字段")
                 for (appEl in apps) {
                     val app = appEl as? JsonObject ?: continue
@@ -67,6 +70,7 @@ object SubscriptionUpdater {
                 .putString("subs_store", store.toString())
                 // 无规则的应用在进程启动时直接跳过，不安装任何 Hook
                 .putString("subs_apps", appIds.joinToString("|", prefix = "|", postfix = "|"))
+                .putInt("subs_global", globalCount)
                 .putString("subs_meta", "${appIds.size} 应用 / $ruleCount 条规则")
                 .putLong("last_update", System.currentTimeMillis())
                 .apply()

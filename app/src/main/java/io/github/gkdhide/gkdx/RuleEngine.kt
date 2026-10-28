@@ -26,7 +26,8 @@ object RuleEngine {
 
     fun evaluate(pkg: String, activity: Activity?, roots: List<View>): Int {
         val subs = SubscriptionStore.get() ?: return 0
-        val groups = subs.apps[pkg] ?: return 0
+        val groups = subs.groupsFor(pkg) + subs.globalGroups
+        if (groups.isEmpty()) return 0
         if (roots.isEmpty()) return 0
         val disabledKeys = DisabledCache.get()
         if (DisabledStore.isAppDisabled(disabledKeys, pkg)) return 0
@@ -35,13 +36,15 @@ object RuleEngine {
         val activityKey: Any = activity ?: pkg
         var triggered = 0
         for (group in groups) {
-            if (DisabledStore.isGroupDisabled(disabledKeys, pkg, group.key)) continue
+            if (group.isGlobal) {
+                if (DisabledStore.isGlobalGroupDisabled(disabledKeys, group.subIndex, group.key)) continue
+            } else if (DisabledStore.isGroupDisabled(disabledKeys, pkg, group.key)) continue
             if (activityName != null) {
                 if (group.excludeActivityIds?.any { activityMatch(it, activityName) } == true) continue
                 if (group.activityIds?.any { activityMatch(it, activityName) } == false) continue
             }
             for ((idx, rule) in group.rules.withIndex()) {
-                val stateKey = "${group.key}:$idx:${rule.key}"
+                val stateKey = "$pkg|${if (group.isGlobal) "g" else "a"}${group.subIndex}:${group.key}:$idx:${rule.key}"
                 val st = states.getOrPut(stateKey) { RuleState() }
                 if (st.activityKey !== activityKey) {
                     // resetMatch=app 时跨 Activity 保留计数，其余情况重置

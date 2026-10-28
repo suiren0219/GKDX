@@ -32,4 +32,10 @@ object DisabledStore {
 
     fun isGroupDisabled(keys: Set<String>, pkg: String, groupKey: Int) =
         keys.contains(groupKey(pkg, groupKey))
+
+    /** 全局组（globalGroups）的禁用键，按 订阅序号+组key 区分 */
+    fun globalGroupKey(subIndex: Int, groupKey: Int) = "$PREFIX_GROUP@global|$subIndex|$groupKey"
+
+    fun isGlobalGroupDisabled(keys: Set<String>, subIndex: Int, groupKey: Int) =
+        keys.contains(globalGroupKey(subIndex, groupKey))
 }
