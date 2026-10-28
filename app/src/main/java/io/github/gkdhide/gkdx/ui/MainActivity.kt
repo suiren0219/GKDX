@@ -2,6 +2,7 @@ package io.github.gkdhide.gkdx.ui
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -782,7 +783,85 @@ private fun SettingsTab(
                 FilledTonalButton(onClick = onSaveTexts) { Text("保存") }
             }
         }
+        item { UpdateCard() }
         item { AboutCard() }
+    }
+}
+
+@Composable
+private fun UpdateCard() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var checking by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf("") }
+    var info by remember { mutableStateOf<UpdateChecker.Info?>(null) }
+
+    SectionCard("更新") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "当前版本 ${BuildConfig.VERSION_NAME}",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Button(
+                onClick = {
+                    if (checking) return@Button
+                    scope.launch {
+                        checking = true
+                        message = ""
+                        try {
+                            val latest = UpdateChecker.check()
+                            info = latest
+                            message = if (UpdateChecker.isNewer(latest.tagName, BuildConfig.VERSION_NAME)) {
+                                "发现新版本 ${latest.tagName}"
+                            } else {
+                                "已是最新版本"
+                            }
+                        } catch (t: Throwable) {
+                            message = "检查失败：${t.message ?: "网络错误"}（GitHub 直连可能需要代理）"
+                        }
+                        checking = false
+                    }
+                },
+                enabled = !checking,
+            ) { Text(if (checking) "检查中…" else "检查更新") }
+        }
+        if (checking) {
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+        if (message.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                message,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (message.startsWith("发现")) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        info?.let { i ->
+            if (i.notes.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    i.notes,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 6,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(UpdateChecker.RELEASE_PAGE)))
+                }) { Text("打开发布页") }
+                if (UpdateChecker.isNewer(i.tagName, BuildConfig.VERSION_NAME)) {
+                    Button(onClick = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(i.apkUrl ?: UpdateChecker.RELEASE_PAGE)))
+                    }) { Text("下载新版本") }
+                }
+            }
+        }
     }
 }
 
