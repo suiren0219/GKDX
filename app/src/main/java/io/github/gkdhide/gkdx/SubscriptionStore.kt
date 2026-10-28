@@ -126,6 +126,11 @@ object SubscriptionStore {
     @Volatile private var globalCountTime: Long = 0L
     private val lock = Any()
 
+    /** 最近一次 get() 失败的具体原因（供 Root 模式通知展示），成功后清空 */
+    @Volatile
+    var lastError: String? = null
+        private set
+
     /**
      * 订阅覆盖的应用包名索引（形如 |pkg1|pkg2|）。没有规则的应用在进程启动时
      * 直接跳过、不装任何 Hook；但存在全局组时例外（全局组对所有应用生效）。
@@ -165,19 +170,25 @@ object SubscriptionStore {
             if (cache != null && SystemClock.elapsedRealtime() - cacheTime < 30_000) return cache
             try {
                 val raw = readRaw(context)
-                if (raw.isNullOrEmpty()) return cache
+                if (raw.isNullOrEmpty()) {
+                    lastError = "没有读到已下载的订阅数据，请先在订阅页点\"更新订阅\""
+                    return cache
+                }
                 if (raw == cacheKey) {
                     cacheTime = SystemClock.elapsedRealtime()
+                    lastError = null
                     return cache
                 }
                 val parsed = parseStore(raw)
                 cache = parsed
                 cacheKey = raw
                 cacheTime = SystemClock.elapsedRealtime()
+                lastError = null
                 SafeLog.log("[GKDX] 订阅已加载: ${parsed.summary}, 全局组=${parsed.globalGroups.size}, 规则数=${parsed.ruleCount}")
                 return parsed
             } catch (t: Throwable) {
-                SafeLog.log("[GKDX] 订阅解析失败")
+                lastError = "订阅解析失败：${t.message ?: t.javaClass.simpleName}"
+                SafeLog.log("[GKDX] ${lastError}")
                 SafeLog.log(t)
                 return cache
             }

@@ -154,7 +154,7 @@ private fun GkdxApp() {
                 TopAppBar(
                     title = {
                         Column {
-                            Text("GKDX", fontWeight = FontWeight.SemiBold)
+                            Text("gkdX", fontWeight = FontWeight.SemiBold)
                             Text(
                                 "订阅引擎 · 无障碍隐藏",
                                 style = MaterialTheme.typography.labelSmall,

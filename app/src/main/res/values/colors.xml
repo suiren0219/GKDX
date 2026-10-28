@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 图标配色沿用 GKD 本体（白天白底黑标 / 夜间黑底白标） -->
+    <color name="gkd_x_bg">#FCFCFC</color>
+    <color name="gkd_x_fg">#111111</color>
+</resources>

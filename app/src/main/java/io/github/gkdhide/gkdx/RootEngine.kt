@@ -55,7 +55,9 @@ object RootEngine {
         if (running) return null
         if (!RootShell.isRoot()) return "未获得 root 权限（请先授予本应用 root）"
         val subs = try { SubscriptionStore.get(appContext) } catch (t: Throwable) { SafeLog.log(t); null }
-        if (subs == null || subs.isEmpty()) return "订阅读取失败，请先\"更新订阅\"后重试"
+        if (subs == null || subs.isEmpty()) {
+            return "订阅读取失败：${SubscriptionStore.lastError ?: "未知原因"}"
+        }
         stopped.set(false)
         running = true
         onStatus = callback

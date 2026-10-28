@@ -57,7 +57,7 @@ class RootEngineService : Service() {
     private fun createChannel() {
         val nm = getSystemService(NotificationManager::class.java)
         val ch = NotificationChannel(
-            CHANNEL_ID, "GKDX Root 模式", NotificationManager.IMPORTANCE_LOW,
+            CHANNEL_ID, "gkdX Root 模式", NotificationManager.IMPORTANCE_LOW,
         )
         ch.description = "Root 模式运行状态"
         nm.createNotificationChannel(ch)
@@ -75,7 +75,7 @@ class RootEngineService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         return Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("GKDX Root 模式")
+            .setContentTitle("gkdX Root 模式")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setOngoing(true)
