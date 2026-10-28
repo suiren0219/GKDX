@@ -2,7 +2,7 @@ package io.github.gkdhide.gkdx.ui
 
 import android.content.Context
 import android.util.Base64
-import io.github.gkdhide.gkdx.SubscriptionStore
+import io.github.gkdhide.gkdx.ZipUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
@@ -54,7 +54,7 @@ object SubscriptionUpdater {
                 store.put(
                     JSONObject().put("url", source.url).put(
                         "data",
-                        Base64.encodeToString(SubscriptionStore.gzip(text), Base64.NO_WRAP),
+                        Base64.encodeToString(ZipUtil.gzip(text), Base64.NO_WRAP),
                     )
                 )
             } catch (t: Throwable) {

@@ -5,6 +5,7 @@ import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
 import de.robv.android.xposed.XposedBridge
+import io.github.gkdhide.gkdx.ui.DisabledStore
 import li.gkd.selector.MatchOptions
 
 /**
@@ -27,11 +28,14 @@ object RuleEngine {
         val subs = SubscriptionStore.get() ?: return 0
         val groups = subs.apps[pkg] ?: return 0
         if (roots.isEmpty()) return 0
+        val disabledKeys = DisabledCache.get()
+        if (DisabledStore.isAppDisabled(disabledKeys, pkg)) return 0
         val adapter = ViewNodeAdapter()
         val activityName = activity?.javaClass?.name
         val activityKey: Any = activity ?: pkg
         var triggered = 0
         for (group in groups) {
+            if (DisabledStore.isGroupDisabled(disabledKeys, pkg, group.key)) continue
             if (activityName != null) {
                 if (group.excludeActivityIds?.any { activityMatch(it, activityName) } == true) continue
                 if (group.activityIds?.any { activityMatch(it, activityName) } == false) continue

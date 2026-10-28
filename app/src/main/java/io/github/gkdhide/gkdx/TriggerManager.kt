@@ -9,6 +9,7 @@ import android.widget.TextView
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
+import io.github.gkdhide.gkdx.ui.DisabledStore
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -75,6 +76,7 @@ object TriggerManager {
         if (!evaluating.compareAndSet(false, true)) return
         try {
             if (SubscriptionStore.get() == null) return
+            if (DisabledStore.isAppDisabled(DisabledCache.get(), pkg)) return
             val activity = currentActivity ?: return
             val roots = collectRoots()
             if (roots.isEmpty()) return

@@ -1,6 +1,7 @@
 package io.github.gkdhide.gkdx
 
 import android.os.SystemClock
+import io.github.gkdhide.gkdx.ui.DisabledStore
 import li.gkd.selector.MatchOptions
 
 /**
@@ -127,7 +128,10 @@ object RootEngine {
         adapter: XmlNodeAdapter,
         root: XmlNode,
     ): Pair<Int, Int>? {
+        val disabledKeys = DisabledCache.get()
+        if (DisabledStore.isAppDisabled(disabledKeys, pkg)) return null
         for (group in groups) {
+            if (DisabledStore.isGroupDisabled(disabledKeys, pkg, group.key)) continue
             if (group.excludeActivityIds?.any { activityMatch(it, activity) } == true) continue
             if (group.activityIds?.any { activityMatch(it, activity) } == false) continue
             for ((idx, rule) in group.rules.withIndex()) {

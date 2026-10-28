@@ -17,10 +17,6 @@ import kotlinx.serialization.json.longOrNull
 import li.gkd.selector.Selector
 import li.gkd.selector.SelectorCompileResult
 import li.songe.json5.Json5
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
-import java.util.zip.GZIPInputStream
-import java.util.zip.GZIPOutputStream
 
 /** 一条编译后的规则（gkd 订阅 rule 的进程内表达） */
 data class CompiledRule(
@@ -127,7 +123,7 @@ object SubscriptionStore {
         for (entry in entries) {
             val obj = entry.jsonObject
             val b64 = obj["data"]?.jsonPrimitive?.content ?: continue
-            val text = gunzip(Base64.decode(b64, Base64.DEFAULT))
+            val text = ZipUtil.gunzip(Base64.decode(b64, Base64.DEFAULT))
             val (summary, count) = parseSubscription(text, apps)
             summaries += summary
             ruleCount += count
@@ -227,11 +223,4 @@ object SubscriptionStore {
     }
 
     private fun num(el: JsonElement?): Long = (el as? JsonPrimitive)?.longOrNull ?: 0L
-
-    fun gzip(s: String): ByteArray = ByteArrayOutputStream().also { out ->
-        GZIPOutputStream(out).use { it.write(s.toByteArray(Charsets.UTF_8)) }
-    }.toByteArray()
-
-    fun gunzip(bytes: ByteArray): String =
-        GZIPInputStream(ByteArrayInputStream(bytes)).use { it.readBytes().toString(Charsets.UTF_8) }
 }
