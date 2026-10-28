@@ -10,6 +10,8 @@
 
 规则来自 **GKD 原生订阅格式**，引擎内嵌 [gkd-kit 官方 selector 选择器引擎](https://github.com/gkd-kit/gkd/tree/main/gkd-selector)。
 
+界面沿用 GKD 的 Compose Material3 风格：Android 12+ 跟随系统动态取色，卡片式分区（运行状态 / 订阅源 / Root 模式 / 无障碍隐藏 / 关于），订阅源可逐个启停、添加、删除。
+
 ## 关于“要不要勾作用域 / 进程注入太多”
 
 两种思路，按需选：

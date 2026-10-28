@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.os.IBinder
+import io.github.gkdhide.gkdx.ui.MainActivity
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Root 模式的前台服务：保证引擎在后台存活，通知栏可随时停止 */
@@ -59,7 +60,7 @@ class RootEngineService : Service() {
     private fun buildNotification(text: String): Notification {
         val open = PendingIntent.getActivity(
             this, 0,
-            Intent(this, ConfigActivity::class.java),
+            Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val stop = PendingIntent.getService(
