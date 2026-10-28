@@ -179,7 +179,9 @@ object RootEngine {
 
         val adapter = XmlNodeAdapter()
         var hitAny = false
-        for (delayMs in longArrayOf(250, 700, 1400, 2400, 3600)) {
+        // 对齐 GKD 的响应节奏：其无障碍服务以 100ms 节流响应窗口变化，
+        // 我们用密集的前段采样逼近（dump 本身约 200-500ms，前段间隔取短）
+        for (delayMs in longArrayOf(200, 500, 1000, 1600, 2400, 3400)) {
             if (!running || stopped.get()) return
             val wait = eventTime + delayMs - SystemClock.elapsedRealtime()
             if (wait > 0) sleep(wait)
