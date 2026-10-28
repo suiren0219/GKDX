@@ -1,7 +1,6 @@
 package io.github.gkdhide.gkdx
 
 import de.robv.android.xposed.IXposedHookLoadPackage
-import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 
 /**
@@ -26,14 +25,14 @@ class EngineHook : IXposedHookLoadPackage {
         try {
             TriggerManager.install(pkg)
         } catch (t: Throwable) {
-            XposedBridge.log("[GKDX] 订阅引擎初始化失败: $pkg")
-            XposedBridge.log(t)
+            SafeLog.log("[GKDX] 订阅引擎初始化失败: $pkg")
+            SafeLog.log(t)
         }
         try {
             HideHook.install(pkg)
         } catch (t: Throwable) {
-            XposedBridge.log("[GKDX] 无障碍隐藏初始化失败: $pkg")
-            XposedBridge.log(t)
+            SafeLog.log("[GKDX] 无障碍隐藏初始化失败: $pkg")
+            SafeLog.log(t)
         }
     }
 }

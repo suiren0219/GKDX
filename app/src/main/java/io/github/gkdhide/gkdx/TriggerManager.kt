@@ -7,7 +7,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import io.github.gkdhide.gkdx.ui.DisabledStore
 import java.util.concurrent.atomic.AtomicBoolean
@@ -82,8 +81,8 @@ object TriggerManager {
             if (roots.isEmpty()) return
             RuleEngine.evaluate(pkg, activity, roots)
         } catch (t: Throwable) {
-            XposedBridge.log("[GKDX] 评估异常")
-            XposedBridge.log(t)
+            SafeLog.log("[GKDX] 评估异常")
+            SafeLog.log(t)
         } finally {
             evaluating.set(false)
         }

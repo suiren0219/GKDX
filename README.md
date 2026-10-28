@@ -5,7 +5,7 @@
 | 模式 | 原理 | 需要无障碍 | 需要勾作用域 | 需要 root |
 |---|---|---|---|---|
 | **Xposed 模式** | 引擎注入目标应用进程，用应用自己的 View 树匹配订阅规则并点击 | ❌ | ✅ | ❌ |
-| **Root 模式** | 引擎跑在模块自己的 root 进程里，`uiautomator dump` 读屏 + `input tap` 点击 | ❌ | ❌ **完全不注入任何应用** | ✅ |
+| **Root 模式** | 引擎跑在模块自己的 root 进程里，logcat 感知界面切换后按开屏时序读屏（`uiautomator dump`）并点击（`input tap`），息屏自动暂停 | ❌ | ❌ **完全不注入任何应用** | ✅ |
 | **无障碍隐藏** | 同时使用 GKD 本体时，在作用域应用里隐藏其无障碍状态 | （GKD 需要） | ✅ | ❌ |
 
 规则来自 **GKD 原生订阅格式**，引擎内嵌 [gkd-kit 官方 selector 选择器引擎](https://github.com/gkd-kit/gkd/tree/main/gkd-selector)。
@@ -71,7 +71,7 @@ https://registry.npmmirror.com/@gkd-kit/subscription/latest/files/dist/gkd.json5
 ## 已知局限
 
 - Xposed 模式：WebView / Flutter / Unity 内部节点在 View 树里不可见（Root 模式反而能覆盖 WebView，两者互补）。
-- Root 模式：轮询式，开屏广告如果只有 <0.5 秒的窗口可能来不及；`uiautomator dump` 在部分机型上偏慢。
+- Root 模式：事件驱动，依赖 ROM 输出 Activity 启动日志（绝大多数 ROM 有）；个别机型 `uiautomator dump` 偏慢。
 - 检测 LSPosed/root 本身属于 Shamiko/DenyList 的范畴；检测“是否安装 GKD”需 Hide My Applist 类模块。
 
 ## 关于 / 原作者

@@ -4,7 +4,6 @@ import android.app.Activity
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
-import de.robv.android.xposed.XposedBridge
 import io.github.gkdhide.gkdx.ui.DisabledStore
 import li.gkd.selector.MatchOptions
 
@@ -108,8 +107,8 @@ object RuleEngine {
                 else -> click(target, center = false)
             }
         } catch (t: Throwable) {
-            XposedBridge.log("[GKDX] 动作执行失败: $action")
-            XposedBridge.log(t)
+            SafeLog.log("[GKDX] 动作执行失败: $action")
+            SafeLog.log(t)
         }
     }
 

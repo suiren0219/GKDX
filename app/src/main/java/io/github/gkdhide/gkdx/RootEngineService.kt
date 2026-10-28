@@ -18,6 +18,7 @@ class RootEngineService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        RootEngine.init(applicationContext)
         createChannel()
         startForeground(NOTIFICATION_ID, buildNotification("正在启动…"))
     }
@@ -28,10 +29,15 @@ class RootEngineService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        val error = RootEngine.start { msg ->
-            lastStatus = msg
-            val nm = getSystemService(NotificationManager::class.java)
-            nm.notify(NOTIFICATION_ID, buildNotification(msg))
+        val error = try {
+            RootEngine.start { msg ->
+                lastStatus = msg
+                val nm = getSystemService(NotificationManager::class.java)
+                nm.notify(NOTIFICATION_ID, buildNotification(msg))
+            }
+        } catch (t: Throwable) {
+            SafeLog.log(t)
+            "启动失败：${t.message ?: t.javaClass.simpleName}"
         }
         if (error != null) {
             lastStatus = error
@@ -75,7 +81,7 @@ class RootEngineService : Service() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(open)
-            .addAction(Notification.Action.Builder(null, "停止", stop).build())
+            .addAction(Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "停止", stop).build())
             .build()
     }
 

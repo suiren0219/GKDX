@@ -81,6 +81,12 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Root 模式常驻通知需要通知权限（Android 13+）
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
         setContent {
             GkdxTheme { GkdxApp() }
         }
@@ -344,7 +350,7 @@ private fun DashboardTab(subs: List<SubscriptionItem>, loading: Boolean, modifie
         item {
             SectionCard("Root 模式") {
                 Text(
-                    "不勾作用域、不注入任何应用：以 root 读屏并点击，可覆盖 WebView 内部节点。",
+                    "不勾作用域、不注入任何应用：事件驱动（界面切换时才读屏），息屏暂停，可覆盖 WebView 内部节点。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

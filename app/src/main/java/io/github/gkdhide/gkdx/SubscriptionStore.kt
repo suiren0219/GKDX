@@ -3,7 +3,6 @@ package io.github.gkdhide.gkdx
 import android.os.SystemClock
 import android.util.Base64
 import de.robv.android.xposed.XSharedPreferences
-import de.robv.android.xposed.XposedBridge
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -176,11 +175,11 @@ object SubscriptionStore {
                 cache = parsed
                 cacheKey = raw
                 cacheTime = SystemClock.elapsedRealtime()
-                XposedBridge.log("[GKDX] 订阅已加载: ${parsed.summary}, 全局组=${parsed.globalGroups.size}, 规则数=${parsed.ruleCount}")
+                SafeLog.log("[GKDX] 订阅已加载: ${parsed.summary}, 全局组=${parsed.globalGroups.size}, 规则数=${parsed.ruleCount}")
                 return parsed
             } catch (t: Throwable) {
-                XposedBridge.log("[GKDX] 订阅解析失败")
-                XposedBridge.log(t)
+                SafeLog.log("[GKDX] 订阅解析失败")
+                SafeLog.log(t)
                 return cache
             }
         }
@@ -331,7 +330,7 @@ object SubscriptionStore {
         when (val result = Selector.compile(src)) {
             is SelectorCompileResult.Success -> result.value
             is SelectorCompileResult.Failure -> {
-                XposedBridge.log("[GKDX] 选择器编译失败: $src (${result.error.message})")
+                SafeLog.log("[GKDX] 选择器编译失败: $src (${result.error.message})")
                 null
             }
         }

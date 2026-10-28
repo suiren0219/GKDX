@@ -15,7 +15,6 @@ import java.util.Set;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XSharedPreferences;
-import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 
 /**
@@ -105,7 +104,7 @@ public class HideHook {
         hookGlobalSwitch(hostPkg);
         hookSettingsSecure(hostPkg);
 
-        if (c.log) XposedBridge.log("[GKDX] 无障碍隐藏已安装: " + hostPkg);
+        if (c.log) SafeLog.INSTANCE.log("[GKDX] 无障碍隐藏已安装: " + hostPkg);
     }
 
     /** 1) AccessibilityManager 服务列表查询：把目标服务从返回列表中过滤掉 */
@@ -134,8 +133,8 @@ public class HideHook {
             XposedHelpers.findAndHookMethod(AccessibilityManager.class,
                     "getAccessibilityServiceList", installedListFilter);
         } catch (Throwable tr) {
-            XposedBridge.log("[GKDX] 服务列表 Hook 失败: " + hostPkg);
-            XposedBridge.log(tr);
+            SafeLog.INSTANCE.log("[GKDX] 服务列表 Hook 失败: " + hostPkg);
+            SafeLog.INSTANCE.log(tr);
         }
     }
 
@@ -172,8 +171,8 @@ public class HideHook {
             XposedHelpers.findAndHookMethod(AccessibilityManager.class,
                     "isTouchExplorationEnabled", fakeFalse);
         } catch (Throwable tr) {
-            XposedBridge.log("[GKDX] 全局开关 Hook 失败: " + hostPkg);
-            XposedBridge.log(tr);
+            SafeLog.INSTANCE.log("[GKDX] 全局开关 Hook 失败: " + hostPkg);
+            SafeLog.INSTANCE.log(tr);
         }
     }
 
@@ -205,8 +204,8 @@ public class HideHook {
             XposedHelpers.findAndHookMethod(Settings.Secure.class, "getStringForUser",
                     ContentResolver.class, String.class, int.class, secureHook);
         } catch (Throwable tr) {
-            XposedBridge.log("[GKDX] Settings Hook 失败: " + hostPkg);
-            XposedBridge.log(tr);
+            SafeLog.INSTANCE.log("[GKDX] Settings Hook 失败: " + hostPkg);
+            SafeLog.INSTANCE.log(tr);
         }
     }
 
