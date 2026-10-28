@@ -1,5 +1,6 @@
 package io.github.gkdhide.gkdx
 
+import android.content.Context
 import android.os.SystemClock
 import android.util.Base64
 import de.robv.android.xposed.XSharedPreferences
@@ -158,14 +159,12 @@ object SubscriptionStore {
         }
     }
 
-    fun get(): ParsedSubscription? {
+    fun get(context: Context? = null): ParsedSubscription? {
         if (cache != null && SystemClock.elapsedRealtime() - cacheTime < 30_000) return cache
         synchronized(lock) {
             if (cache != null && SystemClock.elapsedRealtime() - cacheTime < 30_000) return cache
             try {
-                val prefs = XSharedPreferences(SELF_PACKAGE, "config")
-                prefs.reload()
-                val raw = prefs.getString("subs_store", null)
+                val raw = readRaw(context)
                 if (raw.isNullOrEmpty()) return cache
                 if (raw == cacheKey) {
                     cacheTime = SystemClock.elapsedRealtime()
@@ -182,6 +181,31 @@ object SubscriptionStore {
                 SafeLog.log(t)
                 return cache
             }
+        }
+    }
+
+    /**
+     * 读原始订阅数据。两条通道按进程环境自动选择：
+     * - 模块自身进程（Root 模式）：直接读自己的 SharedPreferences，绝不碰 Xposed 类
+     * - 被 LSPosed 注入的进程：走 XSharedPreferences
+     */
+    private fun readRaw(context: Context?): String? {
+        if (context != null) {
+            return try {
+                context.getSharedPreferences("config", Context.MODE_PRIVATE)
+                    .getString("subs_store", null)
+            } catch (t: Throwable) {
+                SafeLog.log(t)
+                null
+            }
+        }
+        return try {
+            val prefs = XSharedPreferences(SELF_PACKAGE, "config")
+            prefs.reload()
+            prefs.getString("subs_store", null)
+        } catch (t: Throwable) {
+            SafeLog.log(t)
+            null
         }
     }
 

@@ -54,7 +54,7 @@ object RootEngine {
     fun start(callback: (String) -> Unit): String? {
         if (running) return null
         if (!RootShell.isRoot()) return "未获得 root 权限（请先授予本应用 root）"
-        val subs = try { SubscriptionStore.get() } catch (t: Throwable) { SafeLog.log(t); null }
+        val subs = try { SubscriptionStore.get(appContext) } catch (t: Throwable) { SafeLog.log(t); null }
         if (subs == null || subs.isEmpty()) return "订阅读取失败，请先\"更新订阅\"后重试"
         stopped.set(false)
         running = true
@@ -169,10 +169,10 @@ object RootEngine {
         }
         val (pkg, act) = event
         if (pkg == selfPkg || pkg == "android" || pkg == "com.android.systemui") return
-        val subs = try { SubscriptionStore.get() } catch (t: Throwable) { SafeLog.log(t); null } ?: return
+        val subs = try { SubscriptionStore.get(appContext) } catch (t: Throwable) { SafeLog.log(t); null } ?: return
         val groups = subs.groupsFor(pkg) + subs.globalGroups
         if (groups.isEmpty()) return
-        val disabledKeys = DisabledCache.get()
+        val disabledKeys = DisabledCache.get(appContext)
         if (DisabledStore.isAppDisabled(disabledKeys, pkg)) return
 
         log("进入 $act")
@@ -206,7 +206,7 @@ object RootEngine {
         adapter: XmlNodeAdapter,
         root: XmlNode,
     ): Pair<Int, Int>? {
-        val disabledKeys = DisabledCache.get()
+        val disabledKeys = DisabledCache.get(appContext)
         if (DisabledStore.isAppDisabled(disabledKeys, pkg)) return null
         for (group in groups) {
             if (group.isGlobal) {
