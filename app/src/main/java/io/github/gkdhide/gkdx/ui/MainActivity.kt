@@ -70,6 +70,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.gkdhide.gkdx.BuildConfig
+import io.github.gkdhide.gkdx.Diag
 import io.github.gkdhide.gkdx.RootEngine
 import io.github.gkdhide.gkdx.RootEngineService
 import io.github.gkdhide.gkdx.RootShell
@@ -374,7 +375,7 @@ private fun DashboardTab(subs: List<SubscriptionItem>, loading: Boolean, modifie
                                 if (!root) {
                                     Toast.makeText(
                                         context,
-                                        "未获得 root 权限，请在 root 管理器中授予本应用",
+                                        "root 失败：${RootShell.lastError ?: "未授权"}",
                                         Toast.LENGTH_LONG,
                                     ).show()
                                 } else {
@@ -405,6 +406,12 @@ private fun DashboardTab(subs: List<SubscriptionItem>, loading: Boolean, modifie
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (rootRunning) {
+                    Spacer(Modifier.height(10.dp))
+                    HorizontalDivider()
+                    Spacer(Modifier.height(8.dp))
+                    DiagPanel()
+                }
             }
         }
         item {
@@ -422,9 +429,83 @@ private fun DashboardTab(subs: List<SubscriptionItem>, loading: Boolean, modifie
     }
 }
 
+/** Root 模式实时诊断：哪一环断了看这里 */
 @Composable
-private fun StatRow(label: String, value: String) {
-    Row(Modifier.padding(vertical = 2.dp)) {
+private fun DiagPanel() {
+    var tick by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000)
+            tick++
+        }
+    }
+    val lines = remember(tick) { Diag.lines().takeLast(8).asReversed() }
+    Column {
+        Text(
+            "诊断",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(6.dp))
+        DiagRow("root", if (Diag.rootOk) "正常" else "失败（见下方）")
+        DiagRow("订阅", "${Diag.subsApps} 应用 / ${Diag.subsRules} 条 / 全局组 ${Diag.globalGroups}")
+        DiagRow("日志行", "${Diag.logcatLines}（事件源心跳，一直在涨说明 logcat 通）")
+        DiagRow("事件", "${Diag.events} 次（前台应用有规则才算）")
+        DiagRow("焦点轮询", "${Diag.polls} 次 · 当前 ${Diag.focusRaw.ifEmpty { "—" }}")
+        DiagRow("当前界面", "${Diag.lastAct.ifEmpty { "—" }} · ${Diag.lastGroups} 组")
+        DiagRow("读屏", "${Diag.lastDumpNodes} 节点 / ${Diag.lastDumpMs}ms · 失败 ${Diag.dumpFails} 次")
+        DiagRow("最近命中", Diag.lastHit.ifEmpty { "—" })
+        DiagRow("最近点击", "${Diag.lastTap.ifEmpty { "—" }} ${Diag.agoText()}")
+        if (Diag.lastError.isNotEmpty() || Diag.subsError.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "错误：" + (Diag.lastError.ifEmpty { Diag.subsError }),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "事件日志",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        lines.forEach { line ->
+            Text(
+                line,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DiagRow(label: String, value: String) {
+    Row(Modifier.padding(vertical = 1.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(64.dp),
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun StatRow(label: String, value: String) {    Row(Modifier.padding(vertical = 2.dp)) {
         Text(
             label,
             style = MaterialTheme.typography.labelMedium,

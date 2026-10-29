@@ -108,6 +108,9 @@ class ParsedSubscription(
 
     /** 是否一条规则都没有（连全局组也没有） */
     fun isEmpty(): Boolean = globalGroups.isEmpty() && drafts.isEmpty()
+
+    /** 覆盖的应用数 */
+    val appCount: Int get() = drafts.size
 }
 
 /**

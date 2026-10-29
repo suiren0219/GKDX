@@ -3,8 +3,8 @@ package io.github.gkdhide.gkdx
 import android.content.Context
 import android.os.PowerManager
 import android.os.SystemClock
-import li.gkd.selector.MatchOptions
 import io.github.gkdhide.gkdx.ui.DisabledStore
+import li.gkd.selector.MatchOptions
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.concurrent.LinkedBlockingQueue
@@ -12,20 +12,17 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Root 模式引擎 v2（事件驱动，像 GKD 一样省电）：
- * - 以 root 常驻一条 logcat 流，监听 ActivityTaskManager/ActivityManager 的 START 事件感知界面切换
- * - 只对"有规则的应用"在开屏时序（250/700/1400/2400/3600ms）读屏匹配，平时零开销
- * - 息屏自动暂停；每 60 秒一次兜底焦点检查（仅亮屏时）
- * - 读屏用 uiautomator dump，点击用 input tap，全程不注入任何应用进程
+ * Root 模式引擎 v3：
+ * - 双事件源：root logcat 监听 Activity 启动（兼容多种 ROM 日志格式）+ 亮屏时焦点轮询兜底
+ * - 只对"有规则的应用"在开屏时序读屏匹配，平时零开销；息屏暂停
+ * - 全程诊断打点（Diag），界面上可看到卡在哪一环
  */
 object RootEngine {
 
-    @Volatile
-    var running: Boolean = false
+    @Volatile var running: Boolean = false
         private set
 
-    @Volatile
-    var status: String = "未运行"
+    @Volatile var status: String = "未运行"
         private set
 
     private var appContext: Context? = null
@@ -39,6 +36,9 @@ object RootEngine {
     private val stopped = AtomicBoolean(false)
     private val tapTimes = HashMap<String, Long>()
     private val actionCounts = HashMap<String, Long>()
+    private val eventKeyTime = HashMap<String, Long>()
+
+    private const val SAFETY_POLL_MS = 2500L
 
     fun init(context: Context) {
         appContext = context.applicationContext
@@ -50,22 +50,41 @@ object RootEngine {
         true
     }
 
-    /** 返回 null 表示启动成功，否则为失败原因 */
     fun start(callback: (String) -> Unit): String? {
         if (running) return null
-        if (!RootShell.isRoot()) return "未获得 root 权限（请先授予本应用 root）"
+        Diag.lastError = ""
+        Diag.logcatLines = 0
+        Diag.events = 0
+        Diag.polls = 0
+        Diag.dumpFails = 0
+        Diag.subsError = ""
+        if (!RootShell.isRoot()) {
+            Diag.rootOk = false
+            return "未获得 root 权限：${RootShell.lastError ?: "请在 root 管理器中授予本应用"}"
+        }
+        Diag.rootOk = true
         val subs = try { SubscriptionStore.get(appContext) } catch (t: Throwable) { SafeLog.log(t); null }
         if (subs == null || subs.isEmpty()) {
-            return "订阅读取失败：${SubscriptionStore.lastError ?: "未知原因"}"
+            Diag.subsError = SubscriptionStore.lastError ?: "未知"
+            return "订阅读取失败：${Diag.subsError}"
+        }
+        Diag.subsApps = subs.appCount
+        Diag.subsRules = subs.ruleCount
+        Diag.globalGroups = subs.globalGroups.size
+        Diag.subsError = ""
+        if (subs.appCount == 0 && subs.globalGroups.isEmpty()) {
+            return "订阅里没有任何规则，请先在订阅页更新订阅"
         }
         stopped.set(false)
         running = true
         onStatus = callback
         tapTimes.clear()
         actionCounts.clear()
+        eventKeyTime.clear()
         queue.clear()
-        status = "已启动，等待界面切换…"
+        status = "已启动：${subs.appCount} 个应用 / ${subs.ruleCount} 条规则，等待界面切换…"
         callback(status)
+        Diag.line("启动 Root 引擎")
         startLogcatWatcher()
         workerThread = Thread({ workerLoop() }, "GKDX-RootWorker").also {
             it.isDaemon = true
@@ -86,39 +105,45 @@ object RootEngine {
         status = "已停止"
         onStatus?.invoke(status)
         onStatus = null
+        Diag.line("停止 Root 引擎")
     }
 
     private fun log(msg: String) {
         status = msg
         onStatus?.invoke(msg)
+        Diag.line(msg)
     }
 
-    // ---------------- 事件来源：logcat 常驻流 ----------------
+    // ---------------- 事件源 A：logcat ----------------
 
     private fun startLogcatWatcher() {
         logcatThread = Thread({
-            val regex = Regex("cmp=ComponentInfo\\{([a-zA-Z0-9_.]+)/([^}]+)\\}")
+            // 兼容多种 ROM：有的打 cmp=ComponentInfo{pkg/cls}，有的打 cmp=pkg/cls 或 pkg/.cls
+            val reCmp = Regex("cmp=([A-Za-z0-9_.]+)/([A-Za-z0-9_.$]+)")
             while (running && !stopped.get()) {
                 try {
-                    // -c 清旧日志；只收 Activity 启动相关标签，噪音最小
                     val p = ProcessBuilder(
                         "su", "-c",
-                        "logcat -c; logcat -v brief -s ActivityTaskManager:I ActivityManager:I",
+                        "logcat -c 2>/dev/null; logcat -v brief ActivityTaskManager:I ActivityManager:I *:S",
                     ).redirectErrorStream(true).start()
                     logcatProcess = p
+                    Diag.line("logcat 事件源已连接")
                     val reader = BufferedReader(InputStreamReader(p.inputStream), 8192)
                     while (running && !stopped.get()) {
                         val line = reader.readLine() ?: break
-                        if (!line.contains("cmp=ComponentInfo")) continue
-                        val m = regex.find(line) ?: continue
+                        Diag.logcatLines++
+                        if (!line.contains("ActivityTaskManager") && !line.contains("ActivityManager")) continue
+                        if (!line.contains("START u0") && !line.contains("cmp=")) continue
+                        val m = reCmp.find(line) ?: continue
                         var pkg = m.groupValues[1]
                         var act = m.groupValues[2]
                         if (act.startsWith(".")) act = pkg + act
                         enqueueEvent(pkg to act)
                     }
                     try { p.destroy() } catch (_: Throwable) {}
+                    if (running) Diag.line("logcat 断开，5 秒后重连")
                 } catch (t: Throwable) {
-                    SafeLog.log(t)
+                    Diag.lastError = "logcat: ${t.message ?: t.javaClass.simpleName}"
                 }
                 if (running && !stopped.get()) {
                     try { Thread.sleep(5000) } catch (_: InterruptedException) {}
@@ -127,48 +152,47 @@ object RootEngine {
         }, "GKDX-Logcat").also { it.isDaemon = true; it.start() }
     }
 
-    private val eventKeyTime = HashMap<String, Long>()
-
     @Synchronized
     private fun enqueueEvent(event: Pair<String, String>) {
-        if (!running || !interactive()) return // 息屏不产生事件
+        if (!running || !interactive()) return
         val key = "${event.first}|${event.second}"
         val now = SystemClock.elapsedRealtime()
-        if (now - (eventKeyTime[key] ?: 0L) < 2000) return // 同一界面 2 秒内重复 START 去重
+        if (now - (eventKeyTime[key] ?: 0L) < 2000) return
         eventKeyTime[key] = now
         queue.offer(now to event)
     }
 
-    // ---------------- 事件处理 ----------------
+    // ---------------- 事件源 B + 处理 ----------------
 
     private fun workerLoop() {
-        var lastSafetyPoll = 0L
+        var lastSafety = 0L
         while (running && !stopped.get()) {
             try {
-                val ev = queue.poll(400, TimeUnit.MILLISECONDS)
+                val ev = queue.poll(300, TimeUnit.MILLISECONDS)
                 if (ev != null) {
                     handleEvent(ev.second, ev.first)
                     continue
                 }
-                // 兜底：个别 ROM 的 logcat 不打 START，亮屏时每 60 秒查一次焦点
+                // 兜底事件源：焦点轮询（多数 ROM 只有 2.5 秒粒度，但确保不会完全无事件）
                 val now = SystemClock.elapsedRealtime()
-                if (now - lastSafetyPoll > 60_000 && interactive()) {
-                    lastSafetyPoll = now
-                    queryFocus()?.let { enqueueEvent(it) }
+                if (now - lastSafety > SAFETY_POLL_MS && interactive()) {
+                    lastSafety = now
+                    Diag.polls++
+                    queryFocus()?.let { focus ->
+                        Diag.focusRaw = "${focus.first}/${focus.second}"
+                        // 交给 handleEvent 前先判断：同一界面在 2 秒内不重复处理
+                        enqueueEvent(focus)
+                    }
                 }
             } catch (t: Throwable) {
-                SafeLog.log(t)
+                Diag.lastError = "worker: ${t.message ?: t.javaClass.simpleName}"
                 sleep(800)
             }
         }
     }
 
     private fun handleEvent(event: Pair<String, String>, eventTime: Long) {
-        // 丢弃积压的过期事件
-        while (true) {
-            val next = queue.peek() ?: break
-            if (eventTime - next.first > 8000) queue.poll() else break
-        }
+        if (eventTime == 0L) return
         val (pkg, act) = event
         if (pkg == selfPkg || pkg == "android" || pkg == "com.android.systemui") return
         val subs = try { SubscriptionStore.get(appContext) } catch (t: Throwable) { SafeLog.log(t); null } ?: return
@@ -177,30 +201,53 @@ object RootEngine {
         val disabledKeys = DisabledCache.get(appContext)
         if (DisabledStore.isAppDisabled(disabledKeys, pkg)) return
 
-        log("进入 $act")
+        Diag.events++
+        Diag.lastPkg = pkg
+        Diag.lastAct = act
+        Diag.lastGroups = groups.size
+
+        log("进入 $act（${groups.size} 组）")
 
         val adapter = XmlNodeAdapter()
         var hitAny = false
-        // 对齐 GKD 的响应节奏：其无障碍服务以 100ms 节流响应窗口变化，
-        // 我们用密集的前段采样逼近（dump 本身约 200-500ms，前段间隔取短）
-        for (delayMs in longArrayOf(200, 500, 1000, 1600, 2400, 3400)) {
+        for (delayMs in longArrayOf(150, 450, 900, 1500, 2300, 3300)) {
             if (!running || stopped.get()) return
             val wait = eventTime + delayMs - SystemClock.elapsedRealtime()
             if (wait > 0) sleep(wait)
-            if (!interactive()) return // 息屏即停
-            val root = dumpTree() ?: continue
+            if (wait < -4000) break
+            if (!interactive()) return
+            val t0 = SystemClock.elapsedRealtime()
+            val root = dumpTree()
+            Diag.lastDumpMs = SystemClock.elapsedRealtime() - t0
+            if (root == null) {
+                Diag.dumpFails++
+                Diag.line("读屏失败（第 $delayMs ms 采样）")
+                continue
+            }
+            Diag.lastDumpNodes = countNodes(root)
             val hit = findMatch(groups, pkg, act, adapter, root)
             if (hit != null) {
                 tap(hit.first, hit.second)
                 hitAny = true
             }
         }
-        if (hitAny) log("本轮开屏处理完成：$act")
+        if (hitAny) log("本轮处理完成：$act")
+    }
+
+    private fun countNodes(root: XmlNode): Int {
+        var n = 0
+        val stack = ArrayDeque<XmlNode>()
+        stack.addLast(root)
+        while (stack.isNotEmpty()) {
+            val cur = stack.removeLast()
+            n++
+            cur.children.forEach { stack.addLast(it) }
+        }
+        return n
     }
 
     // ---------------- 匹配与动作 ----------------
 
-    /** 返回 (点 x, 点 y) 或 null */
     private fun findMatch(
         groups: List<CompiledGroup>,
         pkg: String,
@@ -220,16 +267,15 @@ object RootEngine {
                 val stateKey = "$pkg|${if (group.isGlobal) "g" else "a"}${group.subIndex}:${group.key}:$idx:${rule.key}"
                 val count = actionCounts[stateKey] ?: 0
                 if (rule.actionMaximum > 0 && count >= rule.actionMaximum) continue
-                val lastTap = tapTimes[stateKey] ?: 0L
-                if (SystemClock.elapsedRealtime() - lastTap < 1500) continue
+                if (SystemClock.elapsedRealtime() - (tapTimes[stateKey] ?: 0L) < 1500) continue
                 if (rule.activityIds?.any { activityMatch(it, activity) } == false) continue
                 if (rule.excludeActivityIds?.any { activityMatch(it, activity) } == true) continue
                 val options = if (rule.quickFind) MatchOptions(fastQuery = true) else MatchOptions.default
 
-                val excluded = rule.excludeMatches.any { ex ->
-                    runCatching { adapter.querySelector(root, ex) }.getOrNull() != null
-                }
-                if (excluded) continue
+                if (rule.excludeMatches.any { ex ->
+                        runCatching { adapter.querySelector(root, ex) }.getOrNull() != null
+                    }
+                ) continue
 
                 val target = if (rule.anyMatches.isNotEmpty()) {
                     rule.anyMatches.firstNotNullOfOrNull { m ->
@@ -241,11 +287,14 @@ object RootEngine {
                     }
                 } ?: continue
 
-                // 引擎与 GKD 一致：不可点击的命中节点向上找可点击父节点
                 val clickable = findClickableAncestor(target) ?: target
                 tapTimes[stateKey] = SystemClock.elapsedRealtime()
                 actionCounts[stateKey] = count + 1
-                log("命中 ${group.name}/${rule.key ?: idx} → 点击 (${clickable.centerX},${clickable.centerY})")
+                val text = clickable.text.ifEmpty { clickable.desc }.take(20)
+                Diag.lastHit = "${group.name}/${rule.key ?: idx}${if (text.isNotEmpty()) " [$text]" else ""}"
+                Diag.lastTap = "(${clickable.centerX},${clickable.centerY})"
+                Diag.lastTapAt = SystemClock.elapsedRealtime()
+                log("命中 ${Diag.lastHit} → ${Diag.lastTap}")
                 return clickable.centerX to clickable.centerY
             }
         }
@@ -269,12 +318,15 @@ object RootEngine {
     // ---------------- root 命令 ----------------
 
     private fun queryFocus(): Pair<String, String>? {
-        val out = RootShell.exec("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp' | head -4", 12000)
-        val regex = Regex("([a-zA-Z0-9_.]+)/([a-zA-Z0-9_.$]+)")
+        val out = RootShell.exec(
+            "dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' | head -4",
+            9000,
+        )
+        val regex = Regex("([A-Za-z0-9_.]+)/([A-Za-z0-9_.$]+)")
         for (line in out.lineSequence()) {
             if (!line.contains("mCurrentFocus") && !line.contains("mFocusedApp")) continue
             val m = regex.find(line) ?: continue
-            val pkg = m.groupValues[1]
+            var pkg = m.groupValues[1]
             var act = m.groupValues[2]
             if (act.startsWith(".")) act = pkg + act
             return pkg to act
@@ -283,12 +335,11 @@ object RootEngine {
     }
 
     private fun dumpTree(): XmlNode? {
-        // 部分机型不支持 --compressed，失败则退回普通 dump
         for (cmd in arrayOf(
             "uiautomator dump --compressed /data/local/tmp/gkdx_ui.xml >/dev/null 2>&1; cat /data/local/tmp/gkdx_ui.xml",
             "uiautomator dump /data/local/tmp/gkdx_ui.xml >/dev/null 2>&1; cat /data/local/tmp/gkdx_ui.xml",
         )) {
-            val xml = RootShell.exec(cmd, 25000)
+            val xml = RootShell.exec(cmd, 20000)
             if (xml.contains("<hierarchy")) return XmlNodeAdapter.parse(xml)
         }
         return null
