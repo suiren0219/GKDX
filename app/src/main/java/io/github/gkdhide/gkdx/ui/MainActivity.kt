@@ -451,7 +451,7 @@ private fun DiagPanel() {
         DiagRow("root", if (Diag.rootOk) "正常" else "失败（见下方）")
         DiagRow("订阅", "${Diag.subsApps} 应用 / ${Diag.subsRules} 条 / 全局组 ${Diag.globalGroups}")
         DiagRow("日志行", "${Diag.logcatLines}（事件源心跳，一直在涨说明 logcat 通）")
-        DiagRow("事件", "${Diag.events} 次（前台应用有规则才算）")
+        DiagRow("事件", "${Diag.events} 次 · 折叠积压 ${Diag.skipped}")
         DiagRow("焦点轮询", "${Diag.polls} 次 · 当前 ${Diag.focusRaw.ifEmpty { "—" }}")
         DiagRow("当前界面", "${Diag.lastAct.ifEmpty { "—" }} · ${Diag.lastGroups} 组")
         DiagRow("读屏", "${Diag.lastDumpNodes} 节点 / ${Diag.lastDumpMs}ms · 失败 ${Diag.dumpFails} 次")

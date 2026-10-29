@@ -12,6 +12,7 @@ object Diag {
 
     @Volatile var logcatLines = 0L
     @Volatile var events = 0L
+    @Volatile var skipped = 0L
     @Volatile var polls = 0L
     @Volatile var focusRaw = ""
 

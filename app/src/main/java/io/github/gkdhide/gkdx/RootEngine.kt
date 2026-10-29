@@ -29,6 +29,7 @@ object RootEngine {
     private var logcatThread: Thread? = null
     private var logcatProcess: Process? = null
     private var workerThread: Thread? = null
+    private var focusThread: Thread? = null
     private var onStatus: ((String) -> Unit)? = null
 
     private val selfPkg = BuildConfig.APPLICATION_ID
@@ -37,8 +38,6 @@ object RootEngine {
     private val tapTimes = HashMap<String, Long>()
     private val actionCounts = HashMap<String, Long>()
     private val eventKeyTime = HashMap<String, Long>()
-
-    private const val SAFETY_POLL_MS = 2500L
 
     fun init(context: Context) {
         appContext = context.applicationContext
@@ -86,6 +85,7 @@ object RootEngine {
         callback(status)
         Diag.line("启动 Root 引擎")
         startLogcatWatcher()
+        startFocusPoller()
         workerThread = Thread({ workerLoop() }, "GKDX-RootWorker").also {
             it.isDaemon = true
             it.priority = Thread.NORM_PRIORITY - 1
@@ -101,6 +101,8 @@ object RootEngine {
         logcatProcess = null
         workerThread?.interrupt()
         workerThread = null
+        focusThread?.interrupt()
+        focusThread = null
         logcatThread = null
         status = "已停止"
         onStatus?.invoke(status)
@@ -162,33 +164,47 @@ object RootEngine {
         queue.offer(now to event)
     }
 
-    // ---------------- 事件源 B + 处理 ----------------
+    // ---------------- 事件源 B（独立线程）+ 处理 ----------------
 
-    private fun workerLoop() {
-        var lastSafety = 0L
-        var lastPolledKey = ""
-        while (running && !stopped.get()) {
-            try {
-                val ev = queue.poll(300, TimeUnit.MILLISECONDS)
-                if (ev != null) {
-                    handleEvent(ev.second, ev.first)
-                    continue
-                }
-                // 兜底事件源：只在焦点【变化】时触发一轮采样（避免同一界面反复处理）
-                val now = SystemClock.elapsedRealtime()
-                if (now - lastSafety > SAFETY_POLL_MS && interactive()) {
-                    lastSafety = now
-                    Diag.polls++
-                    queryFocus()?.let { focus ->
-                        Diag.focusRaw = "${focus.first}/${focus.second}"
-                        val key = "${focus.first}|${focus.second}"
-                        if (key != lastPolledKey) {
-                            lastPolledKey = key
-                            eventKeyTime[key] = SystemClock.elapsedRealtime()
-                            queue.offer(SystemClock.elapsedRealtime() to focus)
+    /** 专用焦点轮询线程：与采样处理分离，采样期间也能立即发现新界面并入队 */
+    private fun startFocusPoller() {
+        focusThread = Thread({
+            var lastKey = ""
+            while (running && !stopped.get()) {
+                try {
+                    if (interactive()) {
+                        Diag.polls++
+                        queryFocus()?.let { focus ->
+                            Diag.focusRaw = "${focus.first}/${focus.second}"
+                            val key = "${focus.first}|${focus.second}"
+                            if (key != lastKey) {
+                                lastKey = key
+                                enqueueEvent(focus)
+                            }
                         }
                     }
+                } catch (t: Throwable) {
+                    Diag.lastError = "focus: ${t.message ?: t.javaClass.simpleName}"
                 }
+                sleep(1000)
+            }
+        }, "GKDX-Focus").also { it.isDaemon = true; it.start() }
+    }
+
+    private fun workerLoop() {
+        while (running && !stopped.get()) {
+            try {
+                val first = queue.poll(500, TimeUnit.MILLISECONDS) ?: continue
+                // 事件折叠：只处理最新的一条，积压的旧界面直接丢弃（用户只关心当前屏幕）
+                var newest = first
+                var dropped = 0
+                while (true) {
+                    val n = queue.poll() ?: break
+                    dropped++
+                    newest = n
+                }
+                if (dropped > 0) Diag.skipped += dropped
+                handleEvent(newest.second, newest.first)
             } catch (t: Throwable) {
                 Diag.lastError = "worker: ${t.message ?: t.javaClass.simpleName}"
                 sleep(800)
@@ -215,11 +231,13 @@ object RootEngine {
 
         val adapter = XmlNodeAdapter()
         var hitAny = false
-        for (delayMs in longArrayOf(150, 450, 900, 1500, 2300, 3300)) {
+        // 对齐 GKD 的响应节奏（其无障碍 100ms 节流），开屏 3 秒内 5 次采样；
+        // 单次 dump 约 0.3-1.5s，整轮最快 2 秒内完成
+        for (delayMs in longArrayOf(120, 400, 900, 1600, 2600)) {
             if (!running || stopped.get()) return
             val wait = eventTime + delayMs - SystemClock.elapsedRealtime()
             if (wait > 0) sleep(wait)
-            if (wait < -4000) break
+            if (wait < -3000) break
             if (!interactive()) return
             val t0 = SystemClock.elapsedRealtime()
             val root = dumpTree()
