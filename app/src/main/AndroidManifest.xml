@@ -32,6 +32,17 @@
         </activity>
 
         <service
+            android:name=".RootTileService"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="gkdX Root 跳广告"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <service
             android:name=".RootEngineService"
             android:exported="false"
             android:foregroundServiceType="specialUse">

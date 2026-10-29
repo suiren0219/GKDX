@@ -9,6 +9,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -63,6 +64,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -121,6 +123,7 @@ private fun GkdxApp() {
     var updateResult by remember { mutableStateOf("") }
     var showAddDialog by remember { mutableStateOf(false) }
 
+    var hitToast by remember { mutableStateOf(prefs.getBoolean("hit_toast", true)) }
     var hideMaster by remember { mutableStateOf(prefs.getBoolean("hide_master", true)) }
     var strict by remember { mutableStateOf(prefs.getBoolean("strict", true)) }
     var hideInstalled by remember { mutableStateOf(prefs.getBoolean("hide_installed", false)) }
@@ -184,13 +187,19 @@ private fun GkdxApp() {
         ) { inner ->
             val padding = Modifier.padding(inner)
             when (tab) {
-                Tab.Dashboard -> DashboardTab(subs = subs, loading = loading, modifier = padding)
+                Tab.Dashboard -> DashboardTab(
+                    subs = subs,
+                    loading = loading,
+                    modifier = padding,
+                    onGoSubs = { tab = Tab.Subs },
+                )
 
                 Tab.Apps -> AppsTab(
                     subs = subs,
                     loading = loading,
                     disabled = disabled,
                     modifier = padding,
+                    onGoSubs = { tab = Tab.Subs },
                     onToggle = { pkg, on -> toggleDisabled(DisabledStore.appKey(pkg), on) },
                     onOpen = { detailApp = it },
                 )
@@ -230,6 +239,8 @@ private fun GkdxApp() {
                 )
 
                 Tab.Settings -> SettingsTab(
+                    hitToast = hitToast,
+                    onHitToast = { hitToast = it; prefs.edit().putBoolean("hit_toast", it).apply() },
                     hideMaster = hideMaster,
                     strict = strict,
                     hideInstalled = hideInstalled,
@@ -310,11 +321,48 @@ private fun saveHide(
 // ---------------- 仪表盘 ----------------
 
 @Composable
-private fun DashboardTab(subs: List<SubscriptionItem>, loading: Boolean, modifier: Modifier) {
+private fun DashboardTab(
+    subs: List<SubscriptionItem>,
+    loading: Boolean,
+    modifier: Modifier,
+    onGoSubs: () -> Unit,
+) {
     val context = LocalContext.current
+    val prefs = context.getSharedPreferences("config", Context.MODE_PRIVATE)
     val scope = rememberCoroutineScope()
     var rootRunning by remember { mutableStateOf(RootEngine.running) }
     var rootStatus by remember { mutableStateOf(RootEngine.status) }
+
+    // 引导状态
+    var rootOk by remember { mutableStateOf<Boolean?>(null) }
+    var onboarded by remember { mutableStateOf(prefs.getBoolean("onboarded", false)) }
+    LaunchedEffect(Unit) {
+        rootOk = withContext(Dispatchers.IO) { RootShell.isRoot() }
+    }
+    val subsDone = subs.isNotEmpty()
+    val allDone = rootOk == true && subsDone && rootRunning
+    LaunchedEffect(allDone) {
+        if (allDone && !onboarded) {
+            onboarded = true
+            prefs.edit().putBoolean("onboarded", true).apply()
+        }
+    }
+
+    val launchRoot: () -> Unit = {
+        scope.launch {
+            val root = withContext(Dispatchers.IO) { RootShell.isRoot() }
+            if (!root) {
+                Toast.makeText(context, "root 失败：${RootShell.lastError ?: "未授权"}", Toast.LENGTH_LONG).show()
+            } else {
+                val intent = Intent(context, RootEngineService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
+                else context.startService(intent)
+                delay(400)
+                rootRunning = RootEngine.running
+                rootStatus = RootEngine.status
+            }
+        }
+    }
     val appCount = remember(subs) { subs.sumOf { it.apps.size } }
     val ruleCount = remember(subs) { subs.sumOf { it.ruleCount } }
 
@@ -331,6 +379,29 @@ private fun DashboardTab(subs: List<SubscriptionItem>, loading: Boolean, modifie
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        if (!onboarded) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("开始使用", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(8.dp))
+                        OnboardRow(1, "授予 Root 权限", rootOk == true) {
+                            TextButton(onClick = {
+                                scope.launch { rootOk = withContext(Dispatchers.IO) { RootShell.isRoot() } }
+                            }) { Text("检查") }
+                        }
+                        OnboardRow(2, "下载订阅规则", subsDone) {
+                            TextButton(onClick = onGoSubs) { Text("去订阅页") }
+                        }
+                        OnboardRow(3, "启动 Root 模式", rootRunning) {
+                            TextButton(onClick = { launchRoot() }) { Text("启动") }
+                        }
+                    }
+                }
+            }
+        }
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -370,28 +441,7 @@ private fun DashboardTab(subs: List<SubscriptionItem>, loading: Boolean, modifie
                             context.stopService(Intent(context, RootEngineService::class.java))
                         }) { Text("停止") }
                     } else {
-                        Button(onClick = {
-                            scope.launch {
-                                val root = withContext(Dispatchers.IO) { RootShell.isRoot() }
-                                if (!root) {
-                                    Toast.makeText(
-                                        context,
-                                        "root 失败：${RootShell.lastError ?: "未授权"}",
-                                        Toast.LENGTH_LONG,
-                                    ).show()
-                                } else {
-                                    val intent = Intent(context, RootEngineService::class.java)
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                        context.startForegroundService(intent)
-                                    } else {
-                                        context.startService(intent)
-                                    }
-                                    delay(400)
-                                    rootRunning = RootEngine.running
-                                    rootStatus = RootEngine.status
-                                }
-                            }
-                        }) {
+                        Button(onClick = { launchRoot() }) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.width(18.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("启动")
@@ -506,6 +556,41 @@ private fun DiagRow(label: String, value: String) {
 }
 
 @Composable
+private fun OnboardRow(num: Int, title: String, done: Boolean, action: (@Composable () -> Unit)? = null) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            if (done) "✓" else "$num",
+            style = MaterialTheme.typography.titleSmall,
+            fontFamily = FontFamily.Monospace,
+            color = if (done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier.width(28.dp),
+        )
+        Text(
+            title,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+            color = if (done) MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.6f)
+            else MaterialTheme.colorScheme.onTertiaryContainer,
+        )
+        action?.invoke()
+    }
+}
+
+private fun drawableToImageBitmap(d: android.graphics.drawable.Drawable): androidx.compose.ui.graphics.ImageBitmap? =
+    runCatching {
+        if (d is android.graphics.drawable.BitmapDrawable) {
+            d.bitmap.asImageBitmap()
+        } else {
+            val size = 96
+            val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(bmp)
+            d.setBounds(0, 0, size, size)
+            d.draw(canvas)
+            bmp.asImageBitmap()
+        }
+    }.getOrNull()
+
+@Composable
 private fun StatRow(label: String, value: String) {    Row(Modifier.padding(vertical = 2.dp)) {
         Text(
             label,
@@ -538,6 +623,7 @@ private fun AppsTab(
     loading: Boolean,
     disabled: Set<String>,
     modifier: Modifier,
+    onGoSubs: () -> Unit,
     onToggle: (String, Boolean) -> Unit,
     onOpen: (String) -> Unit,
 ) {
@@ -581,7 +667,33 @@ private fun AppsTab(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
         )
         LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
+            if (!loading && filtered.isEmpty()) {
+                item {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 32.dp, vertical = 48.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text("还没有订阅规则", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "先到订阅页更新订阅，这里就会列出所有支持跳广告的应用",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = onGoSubs) { Text("去订阅页") }
+                    }
+                }
+            }
             items(filtered, key = { it.id }) { row ->
+                val ctx = LocalContext.current
+                val icon = remember(row.id) {
+                    runCatching {
+                        drawableToImageBitmap(ctx.packageManager.getApplicationIcon(row.id))
+                    }.getOrNull()
+                }
                 val enabled = !DisabledStore.isAppDisabled(disabled, row.id)
                 Row(
                     modifier = Modifier
@@ -590,6 +702,16 @@ private fun AppsTab(
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    if (icon != null) {
+                        Image(
+                            icon,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .padding(end = 10.dp)
+                                .width(38.dp)
+                                .height(38.dp),
+                        )
+                    }
                     Column(Modifier.weight(1f)) {
                         Text(
                             row.label ?: row.id,
@@ -820,6 +942,8 @@ private fun SubsTab(
 
 @Composable
 private fun SettingsTab(
+    hitToast: Boolean,
+    onHitToast: (Boolean) -> Unit,
     hideMaster: Boolean,
     strict: Boolean,
     hideInstalled: Boolean,
@@ -840,6 +964,11 @@ private fun SettingsTab(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        item {
+            SectionCard("Root 模式偏好") {
+                SwitchRow("命中时弹出提示（gkdX 已跳过：…）", hitToast, onHitToast)
+            }
+        }
         item {
             SectionCard("无障碍隐藏") {
                 Text(

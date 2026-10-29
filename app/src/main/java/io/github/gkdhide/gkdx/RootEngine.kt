@@ -306,6 +306,7 @@ object RootEngine {
                 Diag.lastTap = "(${clickable.centerX},${clickable.centerY})"
                 Diag.lastTapAt = SystemClock.elapsedRealtime()
                 log("命中 ${Diag.lastHit} → ${Diag.lastTap}")
+                maybeToast(Diag.lastHit)
                 return clickable.centerX to clickable.centerY
             }
         }
@@ -371,6 +372,16 @@ object RootEngine {
 
     private fun tap(x: Int, y: Int) {
         RootShell.exec("input tap $x $y", 8000)
+    }
+
+    /** 命中提示（可在设置里关闭）：让用户能确认"真的跳了" */
+    private fun maybeToast(label: String) {
+        val ctx = appContext ?: return
+        if (!ctx.getSharedPreferences("config", Context.MODE_PRIVATE)
+                .getBoolean("hit_toast", true)) return
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            runCatching { android.widget.Toast.makeText(ctx, "gkdX 已跳过：$label", android.widget.Toast.LENGTH_SHORT).show() }
+        }
     }
 
     private fun sleep(ms: Long) {
