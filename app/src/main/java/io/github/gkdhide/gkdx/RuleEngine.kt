@@ -25,7 +25,7 @@ object RuleEngine {
 
     fun evaluate(pkg: String, activity: Activity?, roots: List<View>): Int {
         val subs = SubscriptionStore.get() ?: return 0
-        val groups = subs.groupsFor(pkg) + subs.globalGroups
+        val groups = subs.groupsFor(pkg) + subs.globalGroupsFor(pkg)
         if (groups.isEmpty()) return 0
         if (roots.isEmpty()) return 0
         val disabledKeys = DisabledCache.get()

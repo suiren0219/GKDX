@@ -9,9 +9,7 @@ java {
 }
 
 kotlin {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-    }
+    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
 
 dependencies {
@@ -20,4 +18,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 }
 
-application { mainClass.set("BenchKt") }
+application {
+    mainClass.set(providers.gradleProperty("benchMain").orElse("BenchKt"))
+}

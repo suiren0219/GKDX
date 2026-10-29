@@ -87,10 +87,16 @@ class ParsedSubscription(
     val ruleCount: Int,
     /** 全局组（globalGroups，对所有应用生效，开屏广告规则都在这里），量小，进程内直接编译 */
     val globalGroups: List<CompiledGroup>,
+    /** 全局组的排除应用：订阅里 apps 段 enable:false 的条目，这些应用不用全局规则 */
+    private val globalExcluded: Set<String>,
     /** 每个应用未编译的规则组草稿，按需编译 */
     private val drafts: Map<String, List<GroupDraft>>,
 ) {
     private val compiled = HashMap<String, List<CompiledGroup>>()
+
+    /** 某应用真正要跑的全局组（排除列表里的应用得到空表） */
+    fun globalGroupsFor(pkg: String): List<CompiledGroup> =
+        if (globalExcluded.contains(pkg)) emptyList() else globalGroups
 
     /** 取某应用的规则组（含懒编译缓存）；没有则返回空表 */
     fun groupsFor(pkg: String): List<CompiledGroup> {
@@ -228,17 +234,20 @@ object SubscriptionStore {
         val entries = Json5.parseToJsonElement(raw).jsonArray
         val drafts = HashMap<String, MutableList<GroupDraft>>()
         val globalCompiled = ArrayList<CompiledGroup>()
+        val globalExcluded = HashSet<String>()
         var ruleCount = 0
         val summaries = mutableListOf<String>()
         for ((subIndex, entry) in entries.withIndex()) {
             val obj = entry.jsonObject
             val b64 = obj["data"]?.jsonPrimitive?.content ?: continue
             val text = ZipUtil.gunzip(Base64.decode(b64, Base64.DEFAULT))
-            val (summary, count) = parseSubscription(text, subIndex, drafts, globalCompiled)
+            val (summary, count) = parseSubscription(text, subIndex, drafts, globalCompiled, globalExcluded)
             summaries += summary
             ruleCount += count
         }
-        return ParsedSubscription(summaries.joinToString(" + "), ruleCount, globalCompiled, drafts)
+        return ParsedSubscription(
+            summaries.joinToString(" + "), ruleCount, globalCompiled, globalExcluded, drafts,
+        )
     }
 
     private fun parseSubscription(
@@ -246,6 +255,7 @@ object SubscriptionStore {
         subIndex: Int,
         drafts: MutableMap<String, MutableList<GroupDraft>>,
         globalCompiled: MutableList<CompiledGroup>,
+        globalExcluded: MutableSet<String>,
     ): Pair<String, Int> {
         val root = Json5.parseToJsonElement(text).jsonObject
         val subName = (root["name"] as? JsonPrimitive)?.content ?: "未命名订阅"
@@ -268,6 +278,12 @@ object SubscriptionStore {
         (root["apps"] as? JsonArray)?.forEach { appEl ->
             val app = appEl as? JsonObject ?: return@forEach
             val appId = (app["id"] as? JsonPrimitive)?.content ?: return@forEach
+            // 订阅的 apps 段里 enable:false 的条目 = 该应用不使用全局规则（官方订阅靠它排除微信、系统界面等）
+            if (((app["enable"] as? JsonPrimitive)?.booleanOrNull) == false
+                && (app["groups"] as? JsonArray).isNullOrEmpty()
+            ) {
+                globalExcluded.add(appId)
+            }
             (app["groups"] as? JsonArray)?.forEach { gEl ->
                 val g = gEl as? JsonObject ?: return@forEach
                 if (((g["enable"] as? JsonPrimitive)?.booleanOrNull ?: true)) {

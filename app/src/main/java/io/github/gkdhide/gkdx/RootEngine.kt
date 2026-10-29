@@ -196,7 +196,7 @@ object RootEngine {
         val (pkg, act) = event
         if (pkg == selfPkg || pkg == "android" || pkg == "com.android.systemui") return
         val subs = try { SubscriptionStore.get(appContext) } catch (t: Throwable) { SafeLog.log(t); null } ?: return
-        val groups = subs.groupsFor(pkg) + subs.globalGroups
+        val groups = subs.groupsFor(pkg) + subs.globalGroupsFor(pkg)
         if (groups.isEmpty()) return
         val disabledKeys = DisabledCache.get(appContext)
         if (DisabledStore.isAppDisabled(disabledKeys, pkg)) return
