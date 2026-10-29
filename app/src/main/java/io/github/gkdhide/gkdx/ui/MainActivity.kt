@@ -74,6 +74,7 @@ import io.github.gkdhide.gkdx.Diag
 import io.github.gkdhide.gkdx.RootEngine
 import io.github.gkdhide.gkdx.RootEngineService
 import io.github.gkdhide.gkdx.RootShell
+import io.github.gkdhide.gkdx.SelfTest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -872,8 +873,70 @@ private fun SettingsTab(
                 FilledTonalButton(onClick = onSaveTexts) { Text("保存") }
             }
         }
+        item { SelfTestCard() }
         item { UpdateCard() }
         item { AboutCard() }
+    }
+}
+
+/** 一键自检：在真实广告页上跑整条链路 */
+@Composable
+private fun SelfTestCard() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var running by remember { mutableStateOf(false) }
+    var steps by remember { mutableStateOf(listOf<SelfTest.Step>()) }
+
+    SectionCard("自检（诊断 Root 模式为什么不生效）") {
+        Text(
+            "先把有广告的应用打开并停在广告页附近，再点按钮：前几步立即执行；" +
+                    "\"读屏提示\"出现后你有 4 秒切回广告界面，自检会用真实订阅规则对那个屏幕现场匹配。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        Button(onClick = {
+            if (running) return@Button
+            scope.launch {
+                running = true
+                steps = emptyList()
+                steps = SelfTest.run(context.applicationContext) { current ->
+                    steps = steps + current
+                }
+                running = false
+            }
+        }, enabled = !running) {
+            Text(if (running) "自检中…" else "运行自检")
+        }
+        if (running) {
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+        steps.forEach { s ->
+            Spacer(Modifier.height(4.dp))
+            Row {
+                Text(
+                    if (s.ok) "✓" else "✗",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontFamily = FontFamily.Monospace,
+                    color = if (s.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                    modifier = Modifier.width(20.dp),
+                )
+                Column {
+                    Text(
+                        s.name,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        s.detail,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
     }
 }
 

@@ -117,6 +117,9 @@ class ParsedSubscription(
 
     /** 覆盖的应用数 */
     val appCount: Int get() = drafts.size
+
+    /** 全局组排除的应用数 */
+    val globalExcludedCount: Int get() = globalExcluded.size
 }
 
 /**

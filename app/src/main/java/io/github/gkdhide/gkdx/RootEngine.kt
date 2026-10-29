@@ -166,6 +166,7 @@ object RootEngine {
 
     private fun workerLoop() {
         var lastSafety = 0L
+        var lastPolledKey = ""
         while (running && !stopped.get()) {
             try {
                 val ev = queue.poll(300, TimeUnit.MILLISECONDS)
@@ -173,15 +174,19 @@ object RootEngine {
                     handleEvent(ev.second, ev.first)
                     continue
                 }
-                // 兜底事件源：焦点轮询（多数 ROM 只有 2.5 秒粒度，但确保不会完全无事件）
+                // 兜底事件源：只在焦点【变化】时触发一轮采样（避免同一界面反复处理）
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastSafety > SAFETY_POLL_MS && interactive()) {
                     lastSafety = now
                     Diag.polls++
                     queryFocus()?.let { focus ->
                         Diag.focusRaw = "${focus.first}/${focus.second}"
-                        // 交给 handleEvent 前先判断：同一界面在 2 秒内不重复处理
-                        enqueueEvent(focus)
+                        val key = "${focus.first}|${focus.second}"
+                        if (key != lastPolledKey) {
+                            lastPolledKey = key
+                            eventKeyTime[key] = SystemClock.elapsedRealtime()
+                            queue.offer(SystemClock.elapsedRealtime() to focus)
+                        }
                     }
                 }
             } catch (t: Throwable) {
@@ -232,18 +237,6 @@ object RootEngine {
             }
         }
         if (hitAny) log("本轮处理完成：$act")
-    }
-
-    private fun countNodes(root: XmlNode): Int {
-        var n = 0
-        val stack = ArrayDeque<XmlNode>()
-        stack.addLast(root)
-        while (stack.isNotEmpty()) {
-            val cur = stack.removeLast()
-            n++
-            cur.children.forEach { stack.addLast(it) }
-        }
-        return n
     }
 
     // ---------------- 匹配与动作 ----------------
@@ -334,15 +327,28 @@ object RootEngine {
         return null
     }
 
-    private fun dumpTree(): XmlNode? {
+    internal fun dumpTree(): XmlNode? {
+        // 先删旧文件再 dump：dump 失败时绝不能把上一次的旧界面当结果
         for (cmd in arrayOf(
-            "uiautomator dump --compressed /data/local/tmp/gkdx_ui.xml >/dev/null 2>&1; cat /data/local/tmp/gkdx_ui.xml",
-            "uiautomator dump /data/local/tmp/gkdx_ui.xml >/dev/null 2>&1; cat /data/local/tmp/gkdx_ui.xml",
+            "rm -f /data/local/tmp/gkdx_ui.xml; uiautomator dump --compressed /data/local/tmp/gkdx_ui.xml >/dev/null 2>&1; cat /data/local/tmp/gkdx_ui.xml 2>/dev/null",
+            "rm -f /data/local/tmp/gkdx_ui.xml; uiautomator dump /data/local/tmp/gkdx_ui.xml >/dev/null 2>&1; cat /data/local/tmp/gkdx_ui.xml 2>/dev/null",
         )) {
             val xml = RootShell.exec(cmd, 20000)
             if (xml.contains("<hierarchy")) return XmlNodeAdapter.parse(xml)
         }
         return null
+    }
+
+    internal fun countNodes(root: XmlNode): Int {
+        var n = 0
+        val stack = ArrayDeque<XmlNode>()
+        stack.addLast(root)
+        while (stack.isNotEmpty()) {
+            val cur = stack.removeLast()
+            n++
+            cur.children.forEach { stack.addLast(it) }
+        }
+        return n
     }
 
     private fun tap(x: Int, y: Int) {
