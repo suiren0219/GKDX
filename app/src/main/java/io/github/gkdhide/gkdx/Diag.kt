@@ -21,6 +21,8 @@ object Diag {
     @Volatile var lastGroups = 0
     @Volatile var lastDumpNodes = 0
     @Volatile var lastDumpMs = 0L
+    @Volatile var fastNodes = 0
+    @Volatile var fastMs = 0L
     @Volatile var dumpFails = 0L
 
     @Volatile var lastHit = ""

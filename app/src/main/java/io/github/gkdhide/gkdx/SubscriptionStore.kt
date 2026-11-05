@@ -32,6 +32,7 @@ data class CompiledRule(
     val matchTime: Long,
     val actionMaximum: Int,
     val resetMatch: String,
+    val needsText: Boolean = false,
 )
 
 /** 一个编译后的规则组 */
@@ -48,7 +49,9 @@ data class CompiledGroup(
     val actionMaximum: Int,
     val resetMatch: String,
     val rules: List<CompiledRule>,
-)
+) {
+    val needsText: Boolean get() = rules.any { it.needsText }
+}
 
 /** 编译前的轻量草稿：只保存字符串与标量，避免为所有应用持有选择器对象 */
 data class RuleDraft(
@@ -64,6 +67,7 @@ data class RuleDraft(
     val matchTime: Long,
     val actionMaximum: Int,
     val resetMatch: String,
+    val needsText: Boolean = false,
 )
 
 data class GroupDraft(
@@ -311,6 +315,7 @@ object SubscriptionStore {
             val matches = strList(r["matches"])
             val anyMatches = strList(r["anyMatches"])
             if (matches.isEmpty() && anyMatches.isEmpty()) continue
+            val allSources = matches + anyMatches + strList(r["excludeMatches"])
             rules += RuleDraft(
                 key = (r["key"] as? JsonPrimitive)?.content?.toIntOrNull(),
                 matches = matches,
@@ -319,6 +324,7 @@ object SubscriptionStore {
                 activityIds = strSet(r["activityIds"]),
                 excludeActivityIds = strSet(r["excludeActivityIds"]),
                 action = (r["action"] as? JsonPrimitive)?.content ?: "click",
+                needsText = allSources.any { it.contains("text") || it.contains("desc") },
                 quickFind = (r["quickFind"] ?: g["quickFind"])?.let { (it as? JsonPrimitive)?.booleanOrNull } ?: false,
                 matchDelay = num(r["matchDelay"] ?: g["matchDelay"]),
                 matchTime = num(r["matchTime"] ?: g["matchTime"]),
@@ -359,6 +365,7 @@ object SubscriptionStore {
                 activityIds = rd.activityIds,
                 excludeActivityIds = rd.excludeActivityIds,
                 action = rd.action,
+                needsText = rd.needsText,
                 quickFind = rd.quickFind,
                 matchDelay = rd.matchDelay,
                 matchTime = rd.matchTime,

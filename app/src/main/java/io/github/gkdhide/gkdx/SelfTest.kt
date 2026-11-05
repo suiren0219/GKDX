@@ -60,6 +60,14 @@ object SelfTest {
             val nodes = RootEngine.countNodes(root)
             val ms = System.currentTimeMillis() - t0
             add(true, "读屏(uiautomator)", "$nodes 个节点，耗时 ${ms}ms")
+            val t0f = System.currentTimeMillis()
+            val fast = RootEngine.dumpsysTopTree()
+            if (fast == null) {
+                add(false, "快速读屏(dumpsys)", "失败——将全程依赖 uiautomator（慢）")
+            } else {
+                val n2 = RootEngine.countNodes(fast)
+                add(true, "快速读屏(dumpsys)", "$n2 个节点，耗时 ${System.currentTimeMillis() - t0f}ms（vid 类规则走这层）")
+            }
 
             // 6. 现场匹配
             if (subs == null || focusPkg.isEmpty()) {

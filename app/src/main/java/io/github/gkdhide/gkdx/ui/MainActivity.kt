@@ -504,6 +504,7 @@ private fun DiagPanel() {
         DiagRow("事件", "${Diag.events} 次 · 折叠积压 ${Diag.skipped}")
         DiagRow("焦点轮询", "${Diag.polls} 次 · 当前 ${Diag.focusRaw.ifEmpty { "—" }}")
         DiagRow("当前界面", "${Diag.lastAct.ifEmpty { "—" }} · ${Diag.lastGroups} 组")
+        DiagRow("快速读屏", "${Diag.fastNodes} 节点 / ${Diag.fastMs}ms")
         DiagRow("读屏", "${Diag.lastDumpNodes} 节点 / ${Diag.lastDumpMs}ms · 失败 ${Diag.dumpFails} 次")
         DiagRow("最近命中", Diag.lastHit.ifEmpty { "—" })
         DiagRow("最近点击", "${Diag.lastTap.ifEmpty { "—" }} ${Diag.agoText()}")

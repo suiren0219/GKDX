@@ -231,27 +231,43 @@ object RootEngine {
 
         val adapter = XmlNodeAdapter()
         var hitAny = false
-        // 对齐 GKD 的响应节奏（其无障碍 100ms 节流），开屏 3 秒内 5 次采样；
-        // 单次 dump 约 0.3-1.5s，整轮最快 2 秒内完成
+        // 两级读屏：快层 dumpsys（~100ms，无 text）每拍必跑；慢层 uiautomator 仅当存在 text 规则
+        val needText = groups.any { it.needsText }
         for (delayMs in longArrayOf(120, 400, 900, 1600, 2600)) {
             if (!running || stopped.get()) return
             val wait = eventTime + delayMs - SystemClock.elapsedRealtime()
             if (wait > 0) sleep(wait)
             if (wait < -3000) break
             if (!interactive()) return
+
             val t0 = SystemClock.elapsedRealtime()
-            val root = dumpTree()
-            Diag.lastDumpMs = SystemClock.elapsedRealtime() - t0
-            if (root == null) {
-                Diag.dumpFails++
-                Diag.line("读屏失败（第 $delayMs ms 采样）")
-                continue
+            val fast = dumpsysTopTree()
+            Diag.fastMs = SystemClock.elapsedRealtime() - t0
+            if (fast != null) {
+                Diag.fastNodes = countNodes(fast)
+                val hit = findMatch(groups, pkg, act, adapter, fast)
+                if (hit != null) {
+                    tap(hit.first, hit.second)
+                    hitAny = true
+                    continue
+                }
             }
-            Diag.lastDumpNodes = countNodes(root)
-            val hit = findMatch(groups, pkg, act, adapter, root)
-            if (hit != null) {
-                tap(hit.first, hit.second)
-                hitAny = true
+
+            if (needText || fast == null) {
+                val t1 = SystemClock.elapsedRealtime()
+                val root = dumpTree()
+                Diag.lastDumpMs = SystemClock.elapsedRealtime() - t1
+                if (root == null) {
+                    Diag.dumpFails++
+                    if (fast == null) Diag.line("两级读屏都失败（第 $delayMs ms 采样）")
+                    continue
+                }
+                Diag.lastDumpNodes = countNodes(root)
+                val hit = findMatch(groups, pkg, act, adapter, root)
+                if (hit != null) {
+                    tap(hit.first, hit.second)
+                    hitAny = true
+                }
             }
         }
         if (hitAny) log("本轮处理完成：$act")
@@ -344,6 +360,13 @@ object RootEngine {
             return pkg to act
         }
         return null
+    }
+
+    /** 快速层：dumpsys activity top 的视图层级（无 text） */
+    internal fun dumpsysTopTree(): XmlNode? {
+        val out = RootShell.exec("dumpsys activity top 2>/dev/null", 12000)
+        if (!out.contains("View Hierarchy")) return null
+        return DumpsysTree.parse(out)
     }
 
     internal fun dumpTree(): XmlNode? {
