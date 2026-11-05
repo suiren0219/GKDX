@@ -31,6 +31,8 @@ object RootShell {
     private fun openSession(): Boolean {
         closeSession()
         return try {
+            // stderr 并入 stdout：若单独保留，某些 ROM 的 su 启动信息可能把
+            // stderr 管道塞满导致整条会话永久阻塞（所有命令超时）
             val p = ProcessBuilder("su").redirectErrorStream(true).start()
             proc = p
             writer = BufferedWriter(OutputStreamWriter(p.outputStream), 8192)

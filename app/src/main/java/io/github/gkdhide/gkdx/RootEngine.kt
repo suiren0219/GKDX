@@ -216,11 +216,12 @@ object RootEngine {
         if (eventTime == 0L) return
         val (pkg, act) = event
         if (pkg == selfPkg || pkg == "android" || pkg == "com.android.systemui") return
-        val subs = try { SubscriptionStore.get(appContext) } catch (t: Throwable) { SafeLog.log(t); null } ?: return
+        val subs = try { SubscriptionStore.get(appContext) } catch (t: Throwable) { SafeLog.log(t); null }
+        if (subs == null) { Diag.line("$pkg 订阅未加载：${SubscriptionStore.lastError ?: "未知"}"); return }
         val groups = subs.groupsFor(pkg) + subs.globalGroupsFor(pkg)
-        if (groups.isEmpty()) return
+        if (groups.isEmpty()) { Diag.line("$pkg 无规则（订阅未覆盖且全局组排除），忽略"); return }
         val disabledKeys = DisabledCache.get(appContext)
-        if (DisabledStore.isAppDisabled(disabledKeys, pkg)) return
+        if (DisabledStore.isAppDisabled(disabledKeys, pkg)) { Diag.line("$pkg 已被手动关闭，忽略"); return }
 
         Diag.events++
         Diag.lastPkg = pkg

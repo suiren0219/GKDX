@@ -73,6 +73,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.gkdhide.gkdx.BuildConfig
 import io.github.gkdhide.gkdx.Diag
+import io.github.gkdhide.gkdx.DiagReport
 import io.github.gkdhide.gkdx.RootEngine
 import io.github.gkdhide.gkdx.RootEngineService
 import io.github.gkdhide.gkdx.RootShell
@@ -440,7 +441,15 @@ private fun DashboardTab(
                         OutlinedButton(onClick = {
                             context.stopService(Intent(context, RootEngineService::class.java))
                         }) { Text("停止") }
-                    } else {
+                    }
+                    TextButton(onClick = {
+                        scope.launch {
+                            val text = withContext(Dispatchers.IO) { DiagReport.build(context.applicationContext) }
+                            val ok = DiagReport.copy(context, text)
+                            Toast.makeText(context, if (ok) "诊断已复制，直接粘贴发给开发者" else "复制失败", Toast.LENGTH_SHORT).show()
+                        }
+                    }) { Text("复制诊断") }
+                    if (!rootRunning) {
                         Button(onClick = { launchRoot() }) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.width(18.dp))
                             Spacer(Modifier.width(4.dp))
