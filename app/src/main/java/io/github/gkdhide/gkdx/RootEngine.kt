@@ -371,12 +371,15 @@ object RootEngine {
     }
 
     internal fun dumpTree(): XmlNode? {
-        // 先删旧文件再 dump：dump 失败时绝不能把上一次的旧界面当结果
+        // 先删旧文件再 dump：dump 失败时绝不能把上一次的旧界面当结果。
+        // 三条路径降级（--compressed / 普通 / 写到 sdcard），单条超时 12s 快速失败，
+        // 避免 HyperOS 等系统上 uiautomator 挂死拖垮整轮采样
         for (cmd in arrayOf(
             "rm -f /data/local/tmp/gkdx_ui.xml; uiautomator dump --compressed /data/local/tmp/gkdx_ui.xml >/dev/null 2>&1; cat /data/local/tmp/gkdx_ui.xml 2>/dev/null",
             "rm -f /data/local/tmp/gkdx_ui.xml; uiautomator dump /data/local/tmp/gkdx_ui.xml >/dev/null 2>&1; cat /data/local/tmp/gkdx_ui.xml 2>/dev/null",
+            "rm -f /sdcard/gkdx_ui.xml; uiautomator dump /sdcard/gkdx_ui.xml >/dev/null 2>&1; cat /sdcard/gkdx_ui.xml 2>/dev/null",
         )) {
-            val xml = RootShell.exec(cmd, 20000)
+            val xml = RootShell.exec(cmd, 12000)
             if (xml.contains("<hierarchy")) return XmlNodeAdapter.parse(xml)
         }
         return null

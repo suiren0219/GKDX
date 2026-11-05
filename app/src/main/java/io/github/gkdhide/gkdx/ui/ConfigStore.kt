@@ -25,6 +25,26 @@ object ConfigStore {
 
     fun load(context: Context): MutableList<Source> {
         val sp = context.getSharedPreferences("config", Context.MODE_PRIVATE)
+        var list = readRaw(sp)
+        // 一次性迁移：旧版本默认只带官方一个源，用户升级后可能只加载了部分订阅。
+        // 确保内置四源齐全（保留各自启用状态），迁移后用户删减不受影响
+        if (!sp.getBoolean("defaults_v2_merged", false)) {
+            val urls = list.map { it.url }.toHashSet()
+            val merged = ArrayList<Source>()
+            DEFAULT_SOURCES.forEach { d ->
+                val existing = list.find { it.url == d.url }
+                merged.add(Source(d.url, existing?.enabled ?: true))
+            }
+            list.filter { it.url !in urls || merged.none { m -> m.url == it.url } }
+                .forEach { if (merged.none { m -> m.url == it.url }) merged.add(it) }
+            list = merged
+            sp.edit().putBoolean("defaults_v2_merged", true).apply()
+            save(context, list)
+        }
+        return list
+    }
+
+    private fun readRaw(sp: android.content.SharedPreferences): MutableList<Source> {
         val raw = sp.getString(KEY_SOURCES, null)
         if (raw != null) {
             runCatching {
