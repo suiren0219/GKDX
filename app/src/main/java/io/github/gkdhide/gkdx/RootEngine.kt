@@ -232,44 +232,51 @@ object RootEngine {
 
         val adapter = XmlNodeAdapter()
         var hitAny = false
-        // 两级读屏：快层 dumpsys（~100ms，无 text）每拍必跑；慢层 uiautomator 仅当存在 text 规则
+        // 采样策略（v1.9）：开屏规则以 text 为主 → 慢层 uiautomator 优先且每拍一条，
+        // 慢层树里 text/vid 都有，一条覆盖全部规则；快层仅在慢层失败或纯 vid 规则时兜底。
+        // 每拍之间零间隔背靠背，按钮出现后最坏 ~1 个 dump 周期（约 1-2s）内点掉。
         val needText = groups.any { it.needsText }
-        for (delayMs in longArrayOf(120, 400, 900, 1600, 2600)) {
+        for (delayMs in longArrayOf(0, 600, 1200, 1800, 2400, 3000)) {
             if (!running || stopped.get()) return
+            if (queue.isNotEmpty()) { Diag.line("有更新的界面待处理，中止本轮采样"); return }
             val wait = eventTime + delayMs - SystemClock.elapsedRealtime()
             if (wait > 0) sleep(wait)
-            if (wait < -3000) break
+            if (wait < -2500) break
             if (!interactive()) return
 
-            val t0 = SystemClock.elapsedRealtime()
-            val fast = dumpsysTopTree()
-            Diag.fastMs = SystemClock.elapsedRealtime() - t0
-            if (fast != null) {
-                Diag.fastNodes = countNodes(fast)
-                val hit = findMatch(groups, pkg, act, adapter, fast)
-                if (hit != null) {
-                    tap(hit.first, hit.second)
-                    hitAny = true
-                    continue
-                }
-            }
-
-            if (needText || fast == null) {
+            var matchedThisTick = false
+            if (needText) {
                 val t1 = SystemClock.elapsedRealtime()
                 // 进入慢层就先记时：卡死时诊断里也能看到，而不是永远 0ms
                 Diag.lastDumpMs = -1
                 val root = dumpTree()
                 Diag.lastDumpMs = SystemClock.elapsedRealtime() - t1
-                if (root == null) {
+                if (root != null) {
+                    Diag.lastDumpNodes = countNodes(root)
+                    val hit = findMatch(groups, pkg, act, adapter, root)
+                    if (hit != null) {
+                        tap(hit.first, hit.second)
+                        hitAny = true
+                    }
+                    matchedThisTick = true
+                } else {
                     Diag.dumpFails++
                     Diag.line("慢层读屏失败（第 $delayMs ms 采样，耗时 ${Diag.lastDumpMs}ms）：${RootShell.lastError ?: "无输出"}")
-                    continue
                 }
-                Diag.lastDumpNodes = countNodes(root)
-                val hit = findMatch(groups, pkg, act, adapter, root)
-                if (hit != null) {
-                    tap(hit.first, hit.second)
-                    hitAny = true
+            }
+
+            // 快层兜底：无 text 规则（纯 vid 类，dumpsys 快 10 倍）或慢层失败时
+            if (!matchedThisTick) {
+                val t0 = SystemClock.elapsedRealtime()
+                val fast = dumpsysTopTree()
+                Diag.fastMs = SystemClock.elapsedRealtime() - t0
+                if (fast != null) {
+                    Diag.fastNodes = countNodes(fast)
+                    val hit = findMatch(groups, pkg, act, adapter, fast)
+                    if (hit != null) {
+                        tap(hit.first, hit.second)
+                        hitAny = true
+                    }
                 }
             }
         }
@@ -317,7 +324,10 @@ object RootEngine {
                     }
                 } ?: continue
 
+                // 不点自己的提示（Toast 文本含规则词，会被订阅规则误匹配）
+                if ((target.text + target.desc).contains("gkdX")) continue
                 val clickable = findClickableAncestor(target) ?: target
+                if ((clickable.text + clickable.desc).contains("gkdX")) continue
                 tapTimes[stateKey] = SystemClock.elapsedRealtime()
                 actionCounts[stateKey] = count + 1
                 val text = clickable.text.ifEmpty { clickable.desc }.take(20)
@@ -403,13 +413,13 @@ object RootEngine {
         RootShell.exec("input tap $x $y", 8000)
     }
 
-    /** 命中提示（可在设置里关闭）：让用户能确认"真的跳了" */
+    /** 命中提示（可在设置里关闭）：文本刻意极简，避免被订阅规则匹配到自家提示 */
     private fun maybeToast(label: String) {
         val ctx = appContext ?: return
         if (!ctx.getSharedPreferences("config", Context.MODE_PRIVATE)
                 .getBoolean("hit_toast", true)) return
         android.os.Handler(android.os.Looper.getMainLooper()).post {
-            runCatching { android.widget.Toast.makeText(ctx, "gkdX 已跳过：$label", android.widget.Toast.LENGTH_SHORT).show() }
+            runCatching { android.widget.Toast.makeText(ctx, "gkdX ✓", android.widget.Toast.LENGTH_SHORT).show() }
         }
     }
 
