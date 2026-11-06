@@ -256,11 +256,13 @@ object RootEngine {
 
             if (needText || fast == null) {
                 val t1 = SystemClock.elapsedRealtime()
+                // 进入慢层就先记时：卡死时诊断里也能看到，而不是永远 0ms
+                Diag.lastDumpMs = -1
                 val root = dumpTree()
                 Diag.lastDumpMs = SystemClock.elapsedRealtime() - t1
                 if (root == null) {
                     Diag.dumpFails++
-                    if (fast == null) Diag.line("两级读屏都失败（第 $delayMs ms 采样）")
+                    Diag.line("慢层读屏失败（第 $delayMs ms 采样，耗时 ${Diag.lastDumpMs}ms）：${RootShell.lastError ?: "无输出"}")
                     continue
                 }
                 Diag.lastDumpNodes = countNodes(root)

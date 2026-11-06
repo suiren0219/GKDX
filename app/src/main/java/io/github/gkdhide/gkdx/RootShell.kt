@@ -1,127 +1,66 @@
 package io.github.gkdhide.gkdx
 
-import android.os.SystemClock
 import java.io.BufferedReader
-import java.io.BufferedWriter
 import java.io.InputStreamReader
-import java.io.OutputStreamWriter
+import java.util.concurrent.TimeUnit
 
 /**
- * root 命令执行：
- * - 优先常驻 su 会话（一次授权，命令走 stdin/stdout，避免每条命令 fork 一个 su，延迟低 3-5 倍）
- * - 会话不可用时退回一次性 su -c
+ * root 命令执行 v2：每条命令都是独立进程（su -c），一次性读完整输出。
+ *
+ * 不再使用常驻会话 + 全局锁：HyperOS/Android 37 上 uiautomator 的输出可能
+ * 不带换行，常驻会话逐行等 marker 会挂死，并因全局锁冻结整条引擎
+ * （焦点轮询、logcat、点击全部停摆）。独立进程自带超时兜底，任何单条
+ * 命令挂死都不会影响其他线程。
  */
 object RootShell {
-
-    private var proc: Process? = null
-    private var writer: BufferedWriter? = null
-    private var reader: BufferedReader? = null
-    private var seq = 0
-    private val lock = Any()
 
     @Volatile
     var lastError: String? = null
         private set
 
-    private fun ts(): String =
-        java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.CHINA)
-            .format(java.util.Date())
-
-    /** 打开常驻会话；成功后 exec 不再 fork su */
-    private fun openSession(): Boolean {
-        closeSession()
-        return try {
-            // stderr 并入 stdout：若单独保留，某些 ROM 的 su 启动信息可能把
-            // stderr 管道塞满导致整条会话永久阻塞（所有命令超时）
-            val p = ProcessBuilder("su").redirectErrorStream(true).start()
-            proc = p
-            writer = BufferedWriter(OutputStreamWriter(p.outputStream), 8192)
-            reader = BufferedReader(InputStreamReader(p.inputStream), 32768)
-            val out = execLocked("id", 8000)
-            val ok = out != null && out.contains("uid=0")
-            if (!ok) lastError = "su 会话未返回 uid=0"
-            ok
-        } catch (t: Throwable) {
-            lastError = "无法启动 su：${t.message ?: t.javaClass.simpleName}"
-            closeSession()
-            false
-        }
+    fun isRoot(): Boolean {
+        val out = exec("id", 6000)
+        val ok = out.contains("uid=0")
+        if (!ok) lastError = "su 未返回 uid=0（输出：${out.take(80)}）"
+        return ok
     }
 
-    private fun closeSession() {
-        try { writer?.close() } catch (_: Throwable) {}
-        try { reader?.close() } catch (_: Throwable) {}
-        try { proc?.destroy() } catch (_: Throwable) {}
-        writer = null
-        reader = null
-        proc = null
-    }
-
-    fun isRoot(): Boolean = synchronized(lock) {
-        if (proc?.isAlive == true) {
-            val out = execLocked("id", 6000)
-            if (out != null) return out.contains("uid=0")
-        }
-        openSession()
-    }
-
-    fun exec(cmd: String, timeoutMs: Long = 15000): String = synchronized(lock) {
-        var sessionOk = proc?.isAlive == true
-        if (!sessionOk) sessionOk = openSession()
-        if (sessionOk) {
-            val out = execLocked(cmd, timeoutMs)
-            if (out != null) return out
-            closeSession()
-        }
-        return oneShot(cmd, timeoutMs)
-    }
-
-    /** 会话内执行；超时或会话损坏返回 null */
-    private fun execLocked(cmd: String, timeoutMs: Long): String? {
-        val w = writer ?: return null
-        val r = reader ?: return null
-        val id = ++seq
-        val marker = "__GKDX_END_${id}__"
-        return try {
-            w.write("$cmd; echo $marker\n")
-            w.flush()
-            val sb = StringBuilder()
-            val deadline = SystemClock.elapsedRealtime() + timeoutMs
-            var finished = false
-            while (SystemClock.elapsedRealtime() < deadline) {
-                if (r.ready()) {
-                    val line = r.readLine() ?: break
-                    if (line.trim() == marker) { finished = true; break }
-                    sb.append(line).append('\n')
-                } else {
-                    Thread.sleep(8)
-                }
-            }
-            if (!finished) {
-                lastError = "命令超时(${timeoutMs}ms)：${cmd.take(40)}"
-                null
-            } else sb.toString()
-        } catch (t: Throwable) {
-            lastError = "会话异常：${t.message ?: t.javaClass.simpleName}"
-            null
-        }
-    }
-
-    private fun oneShot(cmd: String, timeoutMs: Long): String = try {
+    /** 同步执行一条命令，带硬超时；超时后强制销毁进程并返回已读到的部分 */
+    fun exec(cmd: String, timeoutMs: Long = 15000): String = try {
         val p = ProcessBuilder("su", "-c", cmd).redirectErrorStream(true).start()
+        val r = BufferedReader(InputStreamReader(p.inputStream, Charsets.UTF_8), 65536)
         val sb = StringBuilder()
-        val r = BufferedReader(InputStreamReader(p.inputStream), 16384)
-        val deadline = SystemClock.elapsedRealtime() + timeoutMs
-        while (SystemClock.elapsedRealtime() < deadline) {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        // 单字符读取：不依赖换行，dump 输出不带 \n 也能完整收下
+        val buf = CharArray(8192)
+        var timedOut = false
+        while (true) {
+            if (System.nanoTime() >= deadline) {
+                timedOut = true
+                break
+            }
             if (r.ready()) {
-                val line = r.readLine() ?: break
-                sb.append(line).append('\n')
+                val n = r.read(buf)
+                if (n < 0) break
+                sb.append(buf, 0, n)
+                if (sb.length > 4_000_000) break
             } else {
-                if (!p.isAlive && !r.ready()) break
-                Thread.sleep(8)
+                if (!p.isAlive) {
+                    // 进程已退出，把剩余缓冲一次性读完再结束
+                    while (r.ready()) {
+                        val n = r.read(buf)
+                        if (n < 0) break
+                        sb.append(buf, 0, n)
+                    }
+                    break
+                }
+                Thread.sleep(5)
             }
         }
+        if (timedOut) lastError = "命令超时(${timeoutMs}ms)：${cmd.take(48)}"
+        try { r.close() } catch (_: Throwable) {}
         try { p.destroy() } catch (_: Throwable) {}
+        try { p.waitFor(300, TimeUnit.MILLISECONDS) } catch (_: Throwable) {}
         sb.toString()
     } catch (t: Throwable) {
         lastError = "su -c 失败：${t.message ?: t.javaClass.simpleName}"

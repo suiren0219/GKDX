@@ -271,6 +271,14 @@ object SubscriptionStore {
         // 1) 全局组：官方与社区订阅的开屏广告规则都在这里，对所有应用生效
         (root["globalGroups"] as? JsonArray)?.forEach { gEl ->
             val g = gEl as? JsonObject ?: return@forEach
+            // 全局组对象内的 apps:[{id:'...',enable:false}] 是排除名单
+            //（官方订阅排除了 SystemUI/微信等，避免全局开屏规则误点）
+            (g["apps"] as? JsonArray)?.forEach { exEl ->
+                val ex = exEl as? JsonObject ?: return@forEach
+                if (((ex["enable"] as? JsonPrimitive)?.booleanOrNull) == false) {
+                    (ex["id"] as? JsonPrimitive)?.content?.let { globalExcluded.add(it) }
+                }
+            }
             if (((g["enable"] as? JsonPrimitive)?.booleanOrNull ?: true)) {
                 groupDraft(g, subIndex, true)?.let { draft ->
                     compileGroup(draft)?.let {
