@@ -15,8 +15,10 @@ object DiagReport {
         sb.appendLine("版本: " + BuildConfig.VERSION_NAME)
         sb.appendLine("设备: " + Build.MANUFACTURER + " " + Build.MODEL + " / Android " + Build.VERSION.SDK_INT)
         sb.appendLine("root: " + (if (Diag.rootOk) "ok" else "失败 " + (RootShell.lastError ?: "")))
+        sb.appendLine("模式: " + (if (Diag.daemonMode) "守护进程" else "传统(慢)"))
         sb.appendLine("订阅: " + (subs?.let { "${it.appCount} 应用 / ${it.ruleCount} 规则 / 全局组 ${it.globalGroups.size} / 排除 ${it.globalExcludedCount}" }
                 ?: ("未加载 " + (SubscriptionStore.lastError ?: ""))))
+        sb.appendLine("源配置: " + io.github.gkdhide.gkdx.ui.ConfigStore.lastUpdateText(context))
         sb.appendLine("事件: ${Diag.events} 次（折叠 ${Diag.skipped}）· 日志行 ${Diag.logcatLines} · 焦点轮询 ${Diag.polls} 次")
         sb.appendLine("焦点: " + Diag.focusRaw.ifEmpty { "—" })
         sb.appendLine("快层(dumpsys): ${Diag.fastNodes} 节点 / ${Diag.fastMs}ms")

@@ -5,6 +5,7 @@ import android.os.SystemClock
 /** Root 模式运行诊断：界面「诊断」卡片直接读取这些值，方便定位卡在哪一环 */
 object Diag {
     @Volatile var rootOk = false
+    @Volatile var daemonMode = false
     @Volatile var subsApps = 0
     @Volatile var subsRules = 0
     @Volatile var globalGroups = 0

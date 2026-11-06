@@ -299,9 +299,11 @@ object SubscriptionStore {
             ) {
                 globalExcluded.add(appId)
             }
+            // 应用级 enable:false = 该应用所有组默认关闭（GKD 语义），不加入引擎
+            val appEnabled = (app["enable"] as? JsonPrimitive)?.booleanOrNull ?: true
             (app["groups"] as? JsonArray)?.forEach { gEl ->
                 val g = gEl as? JsonObject ?: return@forEach
-                if (((g["enable"] as? JsonPrimitive)?.booleanOrNull ?: true)) {
+                if (appEnabled && ((g["enable"] as? JsonPrimitive)?.booleanOrNull ?: true)) {
                     groupDraft(g, subIndex, false)?.let { draft ->
                         if (draft.rules.isNotEmpty()) {
                             drafts.getOrPut(appId) { mutableListOf() }.add(draft)

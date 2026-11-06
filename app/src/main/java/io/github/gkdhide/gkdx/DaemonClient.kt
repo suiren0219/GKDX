@@ -45,7 +45,7 @@ object DaemonClient {
             )
             // 2. 杀旧实例并拉起（nohup + & 使 su 退出后守护进程存活）
             RootShell.exec(
-                "pkill -f gkdx.daemon.Main 2>/dev/null; sleep 0.3; " +
+                "pkill -f '[g]kdx.daemon.Main' 2>/dev/null; sleep 0.5; " +
                         "nohup CLASSPATH=$DEX_REMOTE:/system/framework/uiautomator.jar " +
                         "app_process /system/bin gkdx.daemon.Main >/dev/null 2>&1 &", 6000
             )
@@ -125,7 +125,7 @@ object DaemonClient {
     fun kill() {
         available = false
         closeQuiet()
-        RootShell.exec("pkill -f gkdx.daemon.Main 2>/dev/null", 3000)
+        RootShell.exec("pkill -f '[g]kdx.daemon.Main' 2>/dev/null", 3000)
     }
 
     private fun writeLine(s: String) {

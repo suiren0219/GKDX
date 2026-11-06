@@ -77,6 +77,7 @@ object RootEngine {
         }
         // 守护进程模式：常驻 shell 级 UiAutomation，dump ~10-80ms（失败自动回退传统模式）
         daemonReady = DaemonClient.ensureStarted(appContext)
+        Diag.daemonMode = daemonReady
         Diag.line(if (daemonReady) "守护进程模式（dump ~10-80ms）" else "守护进程不可用，回退传统模式")
 
         stopped.set(false)
@@ -264,6 +265,7 @@ object RootEngine {
                         // 掉线重连一次，仍失败则降级传统模式
                         if (!DaemonClient.ensureStarted(appContext)) {
                             daemonReady = false
+                            Diag.daemonMode = false
                             Diag.line("守护进程掉线，降级传统模式")
                             break
                         }
