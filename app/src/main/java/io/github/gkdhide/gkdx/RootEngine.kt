@@ -29,6 +29,7 @@ object RootEngine {
     private var logcatThread: Thread? = null
     private var logcatProcess: Process? = null
     private var workerThread: Thread? = null
+    @Volatile private var daemonReady = false
     private var focusThread: Thread? = null
     private var onStatus: ((String) -> Unit)? = null
 
@@ -74,6 +75,10 @@ object RootEngine {
         if (subs.appCount == 0 && subs.globalGroups.isEmpty()) {
             return "订阅里没有任何规则，请先在订阅页更新订阅"
         }
+        // 守护进程模式：常驻 shell 级 UiAutomation，dump ~10-80ms（失败自动回退传统模式）
+        daemonReady = DaemonClient.ensureStarted(appContext)
+        Diag.line(if (daemonReady) "守护进程模式（dump ~10-80ms）" else "守护进程不可用，回退传统模式")
+
         stopped.set(false)
         running = true
         onStatus = callback
@@ -84,6 +89,7 @@ object RootEngine {
         status = "已启动：${subs.appCount} 个应用 / ${subs.ruleCount} 条规则，等待界面切换…"
         callback(status)
         Diag.line("启动 Root 引擎")
+        // 事件源（logcat + 焦点轮询）两种模式都需要：守护进程只加速"读屏"环节
         startLogcatWatcher()
         startFocusPoller()
         workerThread = Thread({ workerLoop() }, "GKDX-RootWorker").also {
@@ -104,6 +110,7 @@ object RootEngine {
         focusThread?.interrupt()
         focusThread = null
         logcatThread = null
+        DaemonClient.kill()
         status = "已停止"
         onStatus?.invoke(status)
         onStatus = null
@@ -232,6 +239,41 @@ object RootEngine {
 
         val adapter = XmlNodeAdapter()
         var hitAny = false
+        // 守护进程模式：每拍一条 ~10-80ms 的 daemon dump，稠密采样
+        if (daemonReady) {
+            for (delayMs in longArrayOf(0, 200, 400, 700, 1000, 1300, 1600, 2000, 2400, 2800)) {
+                if (!running || stopped.get()) return
+                if (queue.isNotEmpty()) { Diag.line("有更新的界面待处理，中止本轮采样"); return }
+                val wait = eventTime + delayMs - SystemClock.elapsedRealtime()
+                if (wait > 0) sleep(wait)
+                if (wait < -2000) break
+                if (!interactive()) return
+                val t1 = SystemClock.elapsedRealtime()
+                val root = DaemonClient.dump(2000)
+                Diag.lastDumpMs = SystemClock.elapsedRealtime() - t1
+                if (root != null) {
+                    Diag.lastDumpNodes = countNodes(root)
+                    val hit = findMatch(groups, pkg, act, adapter, root)
+                    if (hit != null) {
+                        tap(hit.first, hit.second)
+                        hitAny = true
+                    }
+                } else {
+                    Diag.dumpFails++
+                    if (!DaemonClient.alive()) {
+                        // 掉线重连一次，仍失败则降级传统模式
+                        if (!DaemonClient.ensureStarted(appContext)) {
+                            daemonReady = false
+                            Diag.line("守护进程掉线，降级传统模式")
+                            break
+                        }
+                    }
+                }
+            }
+            if (hitAny) log("本轮处理完成：$act")
+            return
+        }
+        // 传统模式（v1.9 采样）：慢层优先，快层兜底（logcat/焦点轮询已在 start() 启动）
         // 采样策略（v1.9）：开屏规则以 text 为主 → 慢层 uiautomator 优先且每拍一条，
         // 慢层树里 text/vid 都有，一条覆盖全部规则；快层仅在慢层失败或纯 vid 规则时兜底。
         // 每拍之间零间隔背靠背，按钮出现后最坏 ~1 个 dump 周期（约 1-2s）内点掉。

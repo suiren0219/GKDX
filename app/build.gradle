@@ -12,8 +12,8 @@ android {
         applicationId 'io.github.gkdhide.gkdx'
         minSdk 26
         targetSdk 34
-        versionCode 19
-        versionName '1.9.0'
+        versionCode 20
+        versionName '2.0.0'
     }
 
     buildFeatures {
@@ -34,6 +34,42 @@ android {
         abortOnError false
     }
 }
+
+// ---------------- 守护进程 dex 构建链 ----------------
+def daemonClasses = file("$buildDir/daemonClasses")
+def daemonDexDir = file("$buildDir/daemonDex")
+android.sourceSets["main"].assets.srcDir("$buildDir/daemonAssets")
+
+tasks.register("compileDaemon", JavaCompile) {
+    source = fileTree("src/main/daemon")
+    destinationDirectory.set(daemonClasses)
+    classpath = files("${android.sdkDirectory}/platforms/android-${android.compileSdk}/android.jar")
+    sourceCompatibility = "1.8"
+    targetCompatibility = "1.8"
+}
+tasks.register("jarDaemon", Jar) {
+    dependsOn("compileDaemon")
+    from(daemonClasses)
+    archiveFileName.set("gkdx_daemon.jar")
+    destinationDirectory.set(file("$buildDir/daemonJar"))
+}
+tasks.register("dexDaemon", Exec) {
+    dependsOn("jarDaemon")
+    doFirst { daemonDexDir.mkdirs() }
+    def bt = "${android.sdkDirectory}/build-tools/34.0.0"
+    def d8 = org.gradle.internal.os.OperatingSystem.current().isWindows() ? file("$bt/d8.bat") : file("$bt/d8")
+    commandLine(d8, "--release", "--min-api", "26", "--output", daemonDexDir.absolutePath,
+                file("$buildDir/daemonJar/gkdx_daemon.jar").absolutePath)
+}
+tasks.register("copyDaemonDex", Copy) {
+    dependsOn("dexDaemon")
+    from(daemonDexDir) {
+        include("classes.dex")
+        rename("classes.dex", "gkdx_daemon.dex")
+    }
+    into("$buildDir/daemonAssets")
+}
+tasks.named("preBuild") { dependsOn("copyDaemonDex") }
 
 dependencies {
     // Xposed API 仅编译期使用，运行时由 LSPosed 宿主提供
